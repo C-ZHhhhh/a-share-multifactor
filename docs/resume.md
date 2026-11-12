@@ -5,7 +5,7 @@
 
 ## 中文版（选 3–5 条）
 
-**A股多因子选股与动态组合优化**　个人项目　Python / pandas / scikit-learn / cvxpy　 [GitHub 链接]
+**A股多因子选股与动态组合优化**　个人项目　Python / pandas / scikit-learn / cvxpy　 [github.com/C-ZHhhhh/a-share-multifactor](https://github.com/C-ZHhhhh/a-share-multifactor)
 
 - 搭建端到端的量化研究框架（数据 → 因子 → 模型 → 优化 → 回测 → 归因），覆盖时点中证800股票池（1,435 只股票、365 万条日度记录），并编写 9 个单元测试来防止前视偏差。
 - 设计数据质量审计并做跨源交叉验证：日收益与独立数据源的一致率为 99.95%，ST 推断精确率为 82%。在审计中发现财报"最新公告日"并不是首次披露日，改用法定截止日估算，使基本面因子的缺失率从 27% 降到 0.3%。
