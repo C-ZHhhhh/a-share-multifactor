@@ -1,0 +1,78 @@
+"""Mean-variance active portfolio optimisation (long-only, benchmark-relative).
+
+max_w   alpha'w - lambda * (w-b)' (X F X' + D) (w-b) - c * ||w - w0||_1
+s.t.    sum(w) = 1, 0 <= w <= b + max_active   (active-weight cap: an absolute cap would force
+                                               underweights in mega-caps such as Moutai, ~6% of CSI800)
+        |industry active weight| <= industry_dev
+        |active size exposure|   <= size_dev
+        0.5 * ||w - w0||_1       <= turnover_limit
+        w_i <= w0_i  for stocks that cannot be bought (not tradable at signal)
+"""
+from __future__ import annotations
+
+import cvxpy as cp
+import numpy as np
+import pandas as pd
+
+from .config import CFG
+
+
+def grinold_alpha(score: pd.Series, spec_vol: pd.Series, ic: float = 0.05) -> pd.Series:
+    """alpha = IC * sigma * z  (Grinold's 'fundamental law' refinement)."""
+    z = (score - score.mean()) / score.std()
+    return ic * np.sqrt(spec_vol) * z
+
+
+def optimize(alpha: pd.Series, bench: pd.Series, X: pd.DataFrame, F: pd.DataFrame, D: pd.Series,
+             w0: pd.Series | None, buyable: pd.Series, pcfg: dict | None = None,
+             cost: float = 0.002) -> tuple[pd.Series, dict]:
+    pcfg = pcfg or CFG["portfolio"]
+    names = X.index
+    a = alpha.reindex(names).fillna(alpha.min() if len(alpha) else 0).values
+    b = bench.reindex(names).fillna(0).values
+    b = b / b.sum()
+    w_prev = (w0.reindex(names).fillna(0).values if w0 is not None else np.zeros(len(names)))
+    can_buy = buyable.reindex(names).fillna(False).values
+    has_alpha = alpha.reindex(names).notna().values
+    ind_cols = [c for c in X.columns if c not in ("size", "beta", "momentum", "volatility", "value", "liquidity")]
+    Xi = X[ind_cols].values
+    xs = X["size"].values
+    Fm = F.loc[X.columns, X.columns].values
+    Fm = (Fm + Fm.T) / 2 + 1e-10 * np.eye(len(Fm))
+    Lf = np.linalg.cholesky(Fm)
+
+    w = cp.Variable(len(names))
+    act = w - b
+    risk = cp.sum_squares(Lf.T @ (X.values.T @ act)) + cp.sum_squares(cp.multiply(np.sqrt(D.values), act))
+    trade = cp.norm1(w - w_prev)
+    obj = a @ w - pcfg["risk_aversion"] * risk - (cost * trade if w0 is not None else 0)
+
+    def cons(relax: float):
+        cap = b + pcfg["max_active_weight"]
+        c = [cp.sum(w) == 1, w >= 0, w <= cap,
+             w <= np.where(can_buy & has_alpha, cap, w_prev),
+             cp.abs(Xi.T @ act) <= pcfg["industry_dev"] * relax,
+             cp.abs(xs @ act) <= pcfg["size_dev"] * relax]
+        if w0 is not None and w_prev.sum() > 0.5:
+            c.append(0.5 * trade <= pcfg["turnover_limit"] * relax)
+        return c
+
+    status = None
+    for relax in (1.0, 1.5, 3.0, 100.0):
+        prob = cp.Problem(cp.Maximize(obj), cons(relax))
+        try:
+            prob.solve(solver=cp.CLARABEL)
+        except cp.SolverError:
+            continue
+        status = prob.status
+        if status in ("optimal", "optimal_inaccurate") and w.value is not None:
+            break
+    wv = np.clip(w.value, 0, None)
+    wv[wv < 1e-4] = 0
+    wv = wv / wv.sum()
+    res = pd.Series(wv, index=names)
+    av = wv - b
+    info = {"status": status, "relax": relax, "n_holdings": int((wv > 0).sum()),
+            "ex_ante_te": float(np.sqrt(np.sum((Lf.T @ (X.values.T @ av)) ** 2) + np.sum(D.values * av ** 2)) * np.sqrt(12)),
+            "turnover": float(0.5 * np.abs(wv - w_prev).sum())}
+    return res[res > 0], info
