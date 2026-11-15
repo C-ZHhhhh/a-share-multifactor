@@ -13,7 +13,7 @@
 5. 含 A 股交易限制的日频回测
 6. 样本外验证，以及 Brinson 和因子归因
 
-每次运行都会自动生成一份**交互式可视化报告** [reports/report.html](reports/report.html)，用浏览器直接打开即可，不需要联网（[在线预览](https://raw.githack.com/C-ZHhhhh/a-share-multifactor/main/reports/report.html)）。报告包含净值、超额收益、分年度表现、选股信号、因子筛选、最新持仓、归因和优化器诊断，并可以在全部、样本内、样本外之间切换。
+每次运行都会自动生成一份**交互式可视化报告** [reports/report.html](reports/report.html)，用浏览器直接打开即可，不需要联网（[在线预览](https://c-zhhhhh.github.io/a-share-multifactor/reports/report.html)）。报告包含净值、超额收益、分年度表现、选股信号、因子筛选、最新持仓、归因和优化器诊断，并可以在全部、样本内、样本外之间切换。
 
 每个月都会产出一份**具体的股票持仓清单**（平均 44 只），回测收益就是按这些持仓逐日计算的。最新一期见 [reports/holdings/latest_portfolio.md](reports/holdings/latest_portfolio.md)。
 
@@ -135,7 +135,7 @@ rm -rf data && bash run_all.sh
 
 ## 报告
 
-- [可视化报告](reports/report.html)（下载后用浏览器打开，或[在线预览](https://raw.githack.com/C-ZHhhhh/a-share-multifactor/main/reports/report.html)）
+- [可视化报告](reports/report.html)（下载后用浏览器打开，或[在线预览](https://c-zhhhhh.github.io/a-share-multifactor/reports/report.html)）
 - [研究报告](reports/research_report.md)：方法、结果、归因、局限，以及研究中发现并修正的 6 个问题
 - [最新一期持仓](reports/holdings/latest_portfolio.md) · [每月持仓 CSV](reports/holdings/)
 - [数据审计](reports/data_audit.md) · [单因子检验](reports/factor_tests.md) · [回测结果明细](reports/results.md)
