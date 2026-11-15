@@ -122,7 +122,7 @@ def fetch_reports(retries: int = 4) -> dict:
 TR_INDICES = {"H00906": "中证800全收益", "H00300": "沪深300全收益", "H00905": "中证500全收益"}
 
 
-def fetch_tr_indices(start: str = "20150101", end: str | None = None) -> None:
+def fetch_tr_indices(start: str = "20150101", end: str | None = None, retries: int = 4) -> None:
     """Total-return (dividends reinvested) indices from CSIndex. Portfolio returns include
     dividends, so excess returns must be measured against a total-return benchmark; the price
     index understates the benchmark by the dividend yield (~2%/yr for CSI800)."""
@@ -133,8 +133,16 @@ def fetch_tr_indices(start: str = "20150101", end: str | None = None) -> None:
         path = out_dir / f"{code}.parquet"
         if path.exists():
             continue
-        _throttle()
-        d = ak.stock_zh_index_hist_csindex(symbol=code, start_date=start, end_date=end)
+        for attempt in range(retries):                       # network hiccups must not kill the pipeline
+            try:
+                _throttle()
+                d = ak.stock_zh_index_hist_csindex(symbol=code, start_date=start, end_date=end)
+                break
+            except Exception as e:
+                if attempt == retries - 1:
+                    raise RuntimeError(f"CSIndex download failed for {code} after {retries} tries "
+                                       f"(is www.csindex.com.cn reachable?): {e}") from e
+                time.sleep(5 * 2 ** attempt)
         d = d.rename(columns={"日期": "date", "收盘": "close", "涨跌幅": "pctChg", "成交量": "volume",
                               "成交金额": "amount"})
         d["date"] = pd.to_datetime(d.date)
