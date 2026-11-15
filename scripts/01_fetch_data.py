@@ -3,6 +3,7 @@
 * universe / industry / IPO dates / indices : baostock (cached in data/raw)
 * daily bars + adjustment factors          : Sina via AkShare
 * quarterly financial reports              : Eastmoney via AkShare (separate thread)
+* cross-validation sample (192 stocks)     : baostock daily bars incl. true ST flag (audit only)
 
 Usage: python scripts/01_fetch_data.py [bars|reports|all]
 """
@@ -26,6 +27,14 @@ if __name__ == "__main__":
     from mf.data_fetch_ak import fetch_daily_sina, fetch_reports, fetch_tr_indices
 
     fetch_tr_indices()
+
+    # independent baostock bars for a fixed 192-stock sample: used only by the data audit to
+    # cross-validate Sina returns and the inferred ST flag (step 2). The list is versioned so the
+    # audit is reproducible; this is the slowest source per stock, hence a sample, not everything.
+    if what == "all":
+        from mf.data_fetch import fetch_daily
+        xval = (Path(__file__).resolve().parents[1] / "src" / "mf" / "xval_codes.txt").read_text().split()
+        fetch_daily(xval)
 
     uni = pd.read_csv(uni_path)
     codes = sorted(uni.code.unique())

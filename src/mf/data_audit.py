@@ -111,6 +111,8 @@ def cross_validate(long: pd.DataFrame) -> dict:
     """Compare Sina-derived panel with independent baostock bars for the overlapping stocks."""
     files = sorted((RAW / "daily").glob("*.parquet"))
     if not files:
+        print("WARNING: data/raw/daily is empty -> cross-source validation skipped "
+              "(run scripts/01_fetch_data.py to fetch the baostock sample)", flush=True)
         return {}
     bs = pd.concat(pd.read_parquet(f) for f in files)
     bs["date"] = pd.to_datetime(bs.date)
