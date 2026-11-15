@@ -163,7 +163,7 @@ footer { margin-top: 40px; color: var(--text-muted); font-size: 12.5px; }
 
   <section>
     <h2>4. 因子筛选</h2>
-    <p class="lead">19 个候选因子在样本内逐个检验，t 值的绝对值至少为 2（虚线）才有资格入选，再按 ICIR 从高到低挑选、去掉和已入选因子太像的。悬停可看每个因子的定义和入选或落选原因。负的 t 值表示因子值越小、未来收益越高，入选后按反方向使用。</p>
+    <p class="lead">19 个候选因子逐个检验，t 值的绝对值至少为 2（虚线）才有资格入选，再按 ICIR 从高到低挑选、去掉和已入选因子太像的。图中是截至样本内终点的检验结果；模型实际使用的是<b>滚动选因子</b>：每个月用同一规则、只用当时已实现的标签重新筛选。悬停可看每个因子在滚动筛选中被选中的月份占比。悬停可看每个因子的定义和入选或落选原因。负的 t 值表示因子值越小、未来收益越高，入选后按反方向使用。</p>
     <div class="card"><div class="legend"><span><i class="box" style="background:var(--series-1)"></i>入选</span><span><i class="box" style="background:var(--neutral)"></i>未入选</span></div><div class="chart" id="factorChart"></div><p class="sub" id="factorNote" style="margin-top:8px"></p></div>
   </section>
 
@@ -456,7 +456,7 @@ function stats(i0, i1) {
 const M = D.meta, dates = D.daily.dates;
 (function meta() {
   const items = [["生成时间", M.generated], ["数据区间", `${M.data_start} ~ ${M.data_end}`], ["选股模型", M.model],
-                 ["风险厌恶 λ", String(M.lam)], ["入选因子", M.n_factors + " 个"], ["代码版本", M.commit]];
+                 ["风险厌恶 λ", String(M.lam)], ["入选因子（截至样本内终点；模型每月滚动筛选）", M.n_factors + " 个"], ["代码版本", M.commit]];
   for (const [k, v] of items) { const s = h("span", k + "："); s.appendChild(h("b", v)); $("meta").appendChild(s); }
 })();
 let range = "oos";
@@ -518,7 +518,7 @@ function renderStatic() {
   // factors
   const fs = D.factors.slice().sort((a, b) => b.t - a.t);
   hBars($("factorChart"), { items: fs.map(f => ({ name: f.short, value: f.t, sel: f.selected,
-      tip: [{ name: f.code + " · " + f.cat, value: "t = " + num(f.t) }, { name: "年化 ICIR", value: num(f.icir) }, { name: "", value: f.why }, { name: f.name, value: "" }] })),
+      tip: [{ name: f.code + " · " + f.cat, value: "t = " + num(f.t) }, { name: "年化 ICIR", value: num(f.icir) }, { name: "滚动筛选中被选中的月份", value: f.wf_share == null ? "-" : pct(f.wf_share, 0) }, { name: "", value: f.why }, { name: f.name, value: "" }] })),
     fmt: v => num(v, 2), color: it => it.sel ? css("--series-1") : css("--neutral"), thresholds: [-2, 2] });
   const out = D.factors.filter(f => !f.selected && f.why.includes("相关性"));
   $("factorNote").textContent = out.length ? "t 值过线却没入选的因子，是因为和已入选因子太像（相关性高于 0.6）：" +
@@ -575,7 +575,7 @@ function renderStatic() {
     const names = [...new Set(RB.costs.map(c => c["组合"]))], mults = [...new Set(RB.costs.map(c => c["成本倍数"]))];
     table($("costTable"), { columns: ["成本倍数", ...names], rows: mults.map(m => ({ cells: [m + "×", ...names.map(n => spct(RB.costs.find(c => c["成本倍数"] === m && c["组合"] === n)["超额年化"]))] })) });
     const bo = RB.bootstrap["样本外"], [cnt, edges] = bo.hist;
-    $("bootSub").textContent = `样本外 ${bo.years.toFixed(1)} 年；IR ${num(bo.ir)}，95% 区间 [${num(bo.ir_ci[0])}, ${num(bo.ir_ci[1])}]；主动收益 ≤ 0 的概率 ${pct(bo.p_le0, 1)}`;
+    $("bootSub").textContent = `样本外 ${bo.years.toFixed(1)} 年；IR ${num(bo.ir)}，95% 区间 [${num(bo.ir_ci[0])}, ${num(bo.ir_ci[1])}]；重抽样中主动收益 ≤ 0 的比例 ${pct(bo.p_le0, 1)}`;
     const tot = cnt.reduce((a, b) => a + b, 0);
     columns($("bootChart"), { items: cnt.map((c, i) => { const mid = (edges[i] + edges[i + 1]) / 2; return { name: `IR ${num(edges[i])} ~ ${num(edges[i + 1])}`, value: c / tot, label: false,
         sign: mid, xlabel: i % 8 === 0 ? num(mid, 1) : null, tip: [{ name: "占比", value: pct(c / tot, 1) }] }; }), fmt: v => pct(v, 0), height: 220, colorBy: it => it.sign >= 0 ? css("--pos") : css("--neg") });

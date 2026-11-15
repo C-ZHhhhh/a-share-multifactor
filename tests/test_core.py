@@ -60,7 +60,7 @@ def test_backtest_blocks_limit_up_buys():
     mkt = _toy_market(3, ["a", "b"], no_buy=nb)
     bt = run_backtest({idx[0]: pd.Series({"a": 0.5, "b": 0.5})}, mkt, cost_on=False)
     h = bt["holdings"][idx[1]]
-    assert "a" not in h.index and h["b"] == pytest.approx(1.0)
+    assert "a" not in h.index and h["b"] == pytest.approx(0.5)   # the blocked half stays in cash
 
 
 def test_optimiser_callback_sees_actual_drifted_weights():
@@ -164,3 +164,48 @@ def test_optimizer_cap_is_active_not_absolute():
     w, info = optimize(alpha, b, X, F, D, None, pd.Series(True, index=names))
     assert w["s0"] == pytest.approx(0.10, abs=1e-3)
     assert info["ex_ante_te"] < 1e-3
+
+
+# ---------------------------------------------------------------- blocked trades & walk-forward selection
+from mf.backtest import _fill
+
+
+def test_blocked_buy_leaves_cash_and_never_flips_a_sale():
+    w = np.array([0.5, 0.5, 0.0])
+    tgt = np.array([0.2, 0.3, 0.5])           # sell a, sell b, buy c ... but c is limit-up
+    nb = np.array([False, False, True]); ns = np.zeros(3, bool)
+    new = _fill(w, tgt, nb, ns)
+    assert new[2] == 0.0                       # blocked buy not executed
+    assert new[0] <= w[0] and new[1] <= w[1]   # the planned sales stay sales (no scaling up)
+    assert new.sum() == pytest.approx(0.5)     # the rest is cash
+
+
+def test_blocked_sell_scales_buys_down_not_into_sales():
+    w = np.array([0.6, 0.2, 0.2])
+    tgt = np.array([0.2, 0.4, 0.4])           # sell a (limit-down), buy b and c
+    nb = np.zeros(3, bool); ns = np.array([True, False, False])
+    new = _fill(w, tgt, nb, ns)
+    assert new[0] == pytest.approx(0.6)        # could not sell
+    assert new.sum() == pytest.approx(1.0)
+    assert (new[1:] >= w[1:] - 1e-12).all()   # buys shrink, never turn into sells
+
+
+def test_walk_forward_selection_ignores_unrealised_labels(monkeypatch):
+    from mf import factor_test
+    rng = np.random.default_rng(0)
+    months = pd.date_range("2016-01-31", periods=30, freq="ME")
+    label = {m: months[k + 1] + pd.Timedelta(days=1) if k + 1 < len(months) else pd.NaT for k, m in enumerate(months)}
+    rows = []
+    for m in months:
+        x = rng.normal(size=60)
+        rows += [{"date": m, "code": f"s{i}", "tradable": True, "z_size": x[i], "z_ep": rng.normal(),
+                  "fwd_ret": 0.5 * x[i] + rng.normal(), "label_date": label[m]} for i in range(60)]
+    data = pd.DataFrame(rows)
+    monkeypatch.setitem(factor_test.CFG["split"], "is_start", "2016-01-01")
+    sel = factor_test.walk_forward_selection(data, ["size", "ep"], min_months=6)
+    cut = months[24]
+    bad = data.copy()
+    bad.loc[bad.label_date >= cut, "fwd_ret"] = -bad.loc[bad.label_date >= cut, "z_size"] * 5   # flip the future
+    sel2 = factor_test.walk_forward_selection(bad, ["size", "ep"], min_months=6)
+    assert sel.loc[:cut].equals(sel2.loc[:cut])          # decisions up to `cut` cannot see labels realised later
+    assert sel.loc[months[10], "size"] == 1

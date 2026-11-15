@@ -14,12 +14,11 @@ from mf.models import predict_gbdt, predict_icir, predict_ridge
 
 if __name__ == "__main__":
     data = load_dataset()
-    sel = json.load(open(PROC / "selected_factors.json"))
-    chosen, signs = sel["selected"], {k: int(v) for k, v in sel["signs"].items()}
+    selection = pd.read_parquet(PROC / "factor_selection.parquet")   # walk-forward factor screen
 
     preds = {
-        "ICIR加权": predict_icir(data, chosen, signs),
-        "Ridge": predict_ridge(data, [f for f in chosen]),
+        "ICIR加权": predict_icir(data, selection),
+        "Ridge": predict_ridge(data, selection),
         "GBDT": predict_gbdt(data),
     }
     scores = pd.DataFrame(preds)

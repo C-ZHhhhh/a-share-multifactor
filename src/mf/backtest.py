@@ -11,7 +11,9 @@ Timeline for a rebalance signal generated at the close of day t:
 Targets can be a fixed dict {signal_date: weights} or a callable target_fn(signal_date, w_actual) that is
 called at the close of each signal date with the portfolio's ACTUAL drifted weights (after blocked trades),
 so a path-dependent optimiser (turnover limit, no-buy constraint) sees the real current holdings.
-The portfolio is always fully invested: costs are paid out of NAV and weights always sum to 1 (cash = 0).
+Costs are paid out of NAV. When buys are blocked the unspent weight stays in cash (0 return) until the next
+rebalance; when sells are blocked the planned buys are scaled down. A trade is never turned around: a stock
+the target wants to sell is never bought, and blocked names are never traded (see _fill).
 """
 from __future__ import annotations
 
@@ -46,6 +48,29 @@ class Market:
         return cls(ret, r1, r2, traded,
                    ~traded | W["one_price_up"].fillna(False).astype(bool),
                    ~traded | W["one_price_down"].fillna(False).astype(bool))
+
+
+def _fill(w: np.ndarray, tgt: np.ndarray, no_buy: np.ndarray, no_sell: np.ndarray) -> np.ndarray:
+    """Post-trade weights given current weights w, target tgt and per-stock trading blocks.
+    Blocked names keep w. If the blocked names now take more room than planned (a sell was blocked), the
+    remaining BUYS are scaled down (never below w, so no buy becomes a sell); if that is not enough, other
+    free names are scaled down, but limit-down / suspended names never below w. If they take less room
+    (a buy was blocked) the leftover is held as cash instead of being spread over other names."""
+    blocked = ((tgt > w) & no_buy) | ((tgt < w) & no_sell)
+    new = np.where(blocked, w, tgt)
+    excess = new.sum() - 1.0
+    if excess > 1e-12:
+        buy = np.where(~blocked & (new > w), new - w, 0.0)
+        cut = min(excess, buy.sum())
+        if cut > 0:
+            new = new - buy * (cut / buy.sum())
+            excess -= cut
+        if excess > 1e-12:
+            floor = np.where(no_sell, np.minimum(w, new), 0.0)
+            slack = np.where(~blocked, new - floor, 0.0)
+            if slack.sum() > 0:
+                new = new - slack * min(1.0, excess / slack.sum())
+    return np.clip(new, 0.0, None)
 
 
 def stamp_rate(d: pd.Timestamp) -> float:
@@ -93,12 +118,7 @@ def run_backtest(targets, mkt: Market, start=None, end=None, cost_on: bool = Tru
             tgt = np.zeros(len(codes))
             t = targets[exec_map[d]]
             tgt[[col[k] for k in t.index if k in col]] = t[[k for k in t.index if k in col]].values
-            blocked = ((tgt > w) & NB[i]) | ((tgt < w) & NS[i])
-            new = np.where(blocked, w, tgt)
-            free = ~blocked
-            room = 1 - new[blocked].sum()
-            if new[free].sum() > 0:
-                new[free] = new[free] * room / new[free].sum()
+            new = _fill(w, tgt, NB[i], NS[i])
             buy = np.clip(new - w, 0, None).sum()
             sell = np.clip(w - new, 0, None).sum()
             cost = (buy * (c["commission"] + c["slippage"]) +
@@ -106,7 +126,7 @@ def run_backtest(targets, mkt: Market, start=None, end=None, cost_on: bool = Tru
             nav *= (1 - cost)
             turn_log[d], cost_log[d] = 0.5 * (buy + sell), cost
             dw = new - w
-            trade_log[d] = pd.Series(dw[dw != 0] * nav, index=codes[dw != 0])   # traded value / initial capital
+            trade_log[d] = pd.Series(dw[dw != 0], index=codes[dw != 0])   # traded weight, fraction of current NAV
             pre_log[d] = cur()
             w = new
             hold_log[d] = pd.Series(w[w > 0], index=codes[w > 0])

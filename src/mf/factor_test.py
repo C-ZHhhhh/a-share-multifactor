@@ -68,19 +68,58 @@ def run_factor_tests(data: pd.DataFrame, period: tuple[str, str]) -> tuple[pd.Da
     return tab, extra
 
 
-def select_factors(tab: pd.DataFrame, data: pd.DataFrame, t_min: float = 2.0, icir_min: float = 0.5,
-                   corr_max: float = 0.6) -> tuple[list[str], dict[str, int], pd.DataFrame]:
-    """Greedy selection by |ICIR|, dropping factors too correlated with an already-selected one."""
-    cand = tab[(tab["t值"].abs() >= t_min) & (tab["ICIR(年化)"].abs() >= icir_min)]
+def _greedy(stats: pd.DataFrame, corr: pd.DataFrame, t_min: float, icir_min: float, corr_max: float):
+    cand = stats[(stats["t值"].abs() >= t_min) & (stats["ICIR(年化)"].abs() >= icir_min)]
     cand = cand.reindex(cand["ICIR(年化)"].abs().sort_values(ascending=False).index)
-    from .dataset import label_window
-    corr = factor_corr(data[label_window(data, CFG["split"]["is_start"], CFG["split"]["is_end"])])
     chosen = []
     for f in cand.index:
         if all(abs(corr.loc[f, g]) < corr_max for g in chosen):
             chosen.append(f)
-    signs = {f: int(np.sign(tab.loc[f, "IC均值"])) for f in chosen}
+    return chosen, {f: int(np.sign(stats.loc[f, "IC均值"])) for f in chosen}
+
+
+def select_factors(tab: pd.DataFrame, data: pd.DataFrame, t_min: float = 2.0, icir_min: float = 0.5,
+                   corr_max: float = 0.6, window: tuple | None = None) -> tuple[list[str], dict[str, int], pd.DataFrame]:
+    """Greedy selection by |ICIR|, dropping factors too correlated with an already-selected one.
+    `window` = (start, end) of the label window for the correlation matrix (default: the configured IS)."""
+    from .dataset import label_window
+    a, b = window or (CFG["split"]["is_start"], CFG["split"]["is_end"])
+    corr = factor_corr(data[label_window(data, a, b)])
+    chosen, signs = _greedy(tab, corr, t_min, icir_min, corr_max)
     return chosen, signs, corr
+
+
+def walk_forward_selection(data: pd.DataFrame, candidates: list | None = None, min_months: int | None = None,
+                           t_min: float = 2.0, icir_min: float = 0.5, corr_max: float = 0.6) -> pd.DataFrame:
+    """Re-run the factor screen at EVERY rebalance date d using only months whose label is realised before d
+    (label_date < d), expanding window from the research start. Removes the in-sample selection bias of a
+    one-off screen. Returns a (date x factor) frame of signs: +1 / -1 selected, 0 not selected; rows with
+    too little history are all 0."""
+    candidates = candidates or list(FACTOR_INFO)
+    min_months = min_months or CFG["model"]["min_train_months"]
+    d0 = data[data.date >= CFG["split"]["is_start"]]
+    ics = pd.DataFrame({f: ic_series(d0, f"z_{f}") for f in candidates})
+    cols = [f"z_{f}" for f in candidates]
+    pc = d0[d0.tradable].groupby("date")[cols].corr(method="spearman")
+    dates_c = sorted(pc.index.get_level_values(0).unique())
+    C = np.stack([pc.loc[d].loc[cols, cols].values for d in dates_c])
+    cum = np.nancumsum(np.nan_to_num(C), axis=0)
+    pos = {d: i for i, d in enumerate(dates_c)}
+    known = d0.groupby("date").label_date.first()
+    out = {}
+    for d in sorted(d0.date.unique()):
+        usable = known[known < d].index
+        ic = ics.loc[ics.index.isin(usable)].dropna(how="all")
+        row = pd.Series(0, index=candidates)
+        if len(ic) >= min_months:
+            mu, sd, n = ic.mean(), ic.std(), ic.count()
+            stats = pd.DataFrame({"IC均值": mu, "ICIR(年化)": mu / sd * np.sqrt(12), "t值": mu / sd * np.sqrt(n)})
+            last = max(pos[x] for x in usable if x in pos)
+            corr = pd.DataFrame(cum[last] / (last + 1), index=candidates, columns=candidates)
+            chosen, signs = _greedy(stats, corr, t_min, icir_min, corr_max)
+            row[list(signs)] = list(signs.values())
+        out[d] = row
+    return pd.DataFrame(out).T.astype(int).rename_axis("date")
 
 
 def factor_corr(data: pd.DataFrame) -> pd.DataFrame:

@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from mf.config import CFG, PROC, REPORTS
 from mf.dataset import build_dataset, label_window
 from mf.factor_test import (ic_decay, plot_factor_tests, plot_ic_decay, run_factor_tests,
-                            select_factors)
+                            select_factors, walk_forward_selection)
 from mf.factors import FACTOR_INFO
 from mf.panel import load_long
 
@@ -31,6 +31,11 @@ if __name__ == "__main__":
     oos_tab.to_csv(PROC / "factor_tests_oos.csv")
     corr.to_csv(PROC / "factor_corr_is.csv")
     json.dump({"selected": chosen, "signs": signs}, open(PROC / "selected_factors.json", "w"), indent=2)
+    # the models use a WALK-FORWARD screen: the same rule re-run every month on labels realised by then
+    wf = walk_forward_selection(data)
+    wf.to_parquet(PROC / "factor_selection.parquet")
+    used = wf[(wf != 0).any(axis=1)]
+    share = (used != 0).mean().sort_values(ascending=False)
 
     show = ["类别", "IC均值", "ICIR(年化)", "t值", "IC>0占比", "多空年化", "多空夏普", "单调性", "因子自相关"]
     fmt = lambda t: t[show].round(3).to_markdown()
@@ -43,8 +48,11 @@ if __name__ == "__main__":
           "## 因子定义", "", "| 因子 | 类别 | 定义 |", "|---|---|---|",
           *[f"| {k} | {v[0]} | {v[1]} |" for k, v in FACTOR_INFO.items()], "",
           f"## 样本内 {S['is_start']} ~ {S['is_end']}", "", fmt(is_tab), "",
-          f"**入选因子** (|t|≥2, |ICIR|≥0.5, 两两相关<0.6, 按 |ICIR| 贪心): "
+          f"**截至样本内终点的入选因子** (|t|≥2, |ICIR|≥0.5, 两两相关<0.6, 按 |ICIR| 贪心): "
           + ", ".join(f"{f}({'+' if signs[f] > 0 else '−'})" for f in chosen), "",
+          "**模型实际使用的是滚动选因子**: 每个调仓日用同一规则重新筛选, 只用该日之前已实现的标签 (扩展窗口, 至少 24 个月)。"
+          "这样样本内的模型比较和回测不会受到 '用整段样本内挑出来的因子' 的偏差。各因子在滚动筛选中被选中的月份占比:", "",
+          share.map(lambda v: f"{v:.0%}").rename("被选中月份占比").to_frame().T.to_markdown(), "",
           "![q](figures/quantile_nav_is.png)", "", "![c](figures/cum_ic_is.png)", "",
           "![corr](figures/factor_corr_is.png)", "", "![decay](figures/ic_decay_is.png)", "",
           f"## 样本外 {S['oos_start']} ~ {S['oos_end']} (仅展示, 未参与筛选)", "", fmt(oos_tab), "",

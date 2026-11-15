@@ -26,7 +26,7 @@ import pandas as pd
 
 from mf.config import CFG, PROC, REPORTS
 from mf.dataset import label_window, load_dataset
-from mf.factor_test import ic_series, ic_stats, run_factor_tests, select_factors
+from mf.factor_test import ic_series, ic_stats
 from mf.metrics import perf
 from mf.panel import load_benchmarks, load_long, to_wide
 
@@ -44,13 +44,16 @@ def _init():
     _W["scores"] = pd.read_parquet(PROC / "model_scores.parquet")
 
 
-def _predict(model: str, data: pd.DataFrame, chosen: list, signs: dict) -> pd.Series:
+def _predict(model: str, data: pd.DataFrame, candidates=None):
+    """Re-run the walk-forward factor screen on (possibly perturbed) data, then the model."""
+    from mf.factor_test import walk_forward_selection
     from mf.models import predict_gbdt, predict_icir, predict_ridge
+    sel = walk_forward_selection(data, candidates)
     if model == "Ridge":
-        return predict_ridge(data, chosen)
+        return predict_ridge(data, sel), sel
     if model == "ICIR加权":
-        return predict_icir(data, chosen, signs)
-    return predict_gbdt(data)
+        return predict_icir(data, sel), sel
+    return predict_gbdt(data), sel
 
 
 def _summ(bt, info, bench, oos_start, oos_end, is_start=None, is_end=None, score=None, data=None) -> dict:
@@ -71,12 +74,19 @@ def _summ(bt, info, bench, oos_start, oos_end, is_start=None, is_end=None, score
     return out
 
 
+def _key(spec: dict) -> str:
+    """What a cached variant depends on: its own spec and the main run's decisions."""
+    return json.dumps({k: v for k, v in spec.items() if k != "force"}, sort_keys=True, ensure_ascii=False, default=str)
+
+
 def task(spec: dict) -> dict:
-    """One optimisation variant (runs in a worker process)."""
+    """One optimisation variant (runs in a worker process). Nothing global is mutated: every period and
+    parameter is passed explicitly, so variants are independent of which worker runs them."""
     f = CACHE / f"{spec['name']}.pkl"
-    fresh = f.exists() and f.stat().st_mtime > (PROC / "backtests.pkl").stat().st_mtime   # newer than the main run
-    if fresh and not spec.get("force"):
-        return pickle.load(open(f, "rb"))
+    if f.exists() and not spec.get("force"):
+        cached = pickle.load(open(f, "rb"))
+        if cached.get("key") == _key(spec) and f.stat().st_mtime > (PROC / "backtests.pkl").stat().st_mtime:
+            return cached
     if not _W:
         _init()
     from mf.portfolio import calibrate_lambda, optimised_backtest
@@ -85,54 +95,59 @@ def task(spec: dict) -> dict:
     bench = load_benchmarks().rec
     pcfg = {**CFG["portfolio"], "risk_aversion": base["lam"], **spec.get("pcfg", {})}
     first_pred = pd.Timestamp(base["first_pred"])
+    trim = lambda sc: sc[sc.index.get_level_values(0) >= first_pred]
 
-    if spec["kind"] == "constraint":           # also used for lambda / model sensitivity
-        score = _W["scores"][spec.get("model", base["best"])]
-        score = score[score.index.get_level_values(0) >= first_pred]
+    if spec["kind"] == "constraint":           # same model and lambda, different constraints / lambda
+        score = trim(_W["scores"][base["best"]])
         bt, info = optimised_backtest(score, data, fret, resid, mkt, pcfg, spec["name"], progress=False)
         res = _summ(bt, info, bench, S["oos_start"], S["oos_end"], first_pred, S["is_end"])
+
+    elif spec["kind"] == "model":              # another model, with its OWN lambda calibrated in-sample
+        score = trim(_W["scores"][spec["model"]])
+        lam, _ = calibrate_lambda(score, data, fret, resid, mkt, bench, pcfg, S["is_end"], label=spec["name"],
+                                  progress=False)
+        bt, info = optimised_backtest(score, data, fret, resid, mkt, {**pcfg, "risk_aversion": lam},
+                                      spec["name"], progress=False)
+        res = _summ(bt, info, bench, S["oos_start"], S["oos_end"], first_pred, S["is_end"], score, data)
+        res["lam"] = lam
 
     elif spec["kind"] == "data":
         d = data.copy()
         cols = [f"z_{c}" for c in FUND]
-        chosen, signs = base["chosen"], base["signs"]
+        cand = None
         if spec["mode"] == "lag":            # fundamentals available one month later than assumed
             d = d.sort_values(["code", "date"])
             d[cols] = d.groupby("code")[cols].shift(1).fillna(0.0)
         elif spec["mode"] == "drop":         # price-volume factors only
-            chosen = [c for c in chosen if c not in FUND]
-            signs = {k: v for k, v in signs.items() if k in chosen}
+            from mf.factors import FACTORS
+            cand = [c for c in FACTORS if c not in FUND]
             d[cols] = 0.0                    # GBDT also loses them
         elif spec["mode"] == "blank":        # 10% of fundamental values lost (set to the cross-sectional mean)
             rng = np.random.default_rng(0)
             m = rng.random((len(d), len(cols))) < 0.10
             d[cols] = d[cols].mask(m, 0.0)
-        score = _predict(base["best"], d, chosen, signs)
-        score = score[score.index.get_level_values(0) >= first_pred]
+        score, sel = _predict(base["best"], d, cand)
+        score = trim(score)
         bt, info = optimised_backtest(score, data, fret, resid, mkt, pcfg, spec["name"], progress=False)
         res = _summ(bt, info, bench, S["oos_start"], S["oos_end"], first_pred, S["is_end"], score, data)
-        res["n_factors"] = len(chosen)
+        res["n_factors"] = float((sel.loc[sel.index >= first_pred] != 0).sum(axis=1).mean())
 
-    elif spec["kind"] == "split":            # redo every in-sample decision with a different split
+    elif spec["kind"] == "split":            # different split: model choice and lambda redone in-sample
         is_end, oos_start = spec["is_end"], spec["oos_start"]
-        CFG["split"] = {**S, "is_end": is_end, "oos_start": oos_start}
-        tab, _ = run_factor_tests(data, (S["is_start"], is_end))
-        chosen, signs, _ = select_factors(tab, data)
-        scores = {m: _predict(m, data, chosen, signs) if m != "GBDT" else _W["scores"]["GBDT"].dropna()
-                  for m in ["ICIR加权", "Ridge", "GBDT"]}
+        # factor selection is walk-forward, so it does not depend on the split; only the IS decisions do
         icir = {}
-        for m, sc in scores.items():
-            dd = data.set_index(["date", "code"]).join(sc.rename("pred"), how="inner").reset_index()
+        for m in ["ICIR加权", "Ridge", "GBDT"]:
+            dd = data.set_index(["date", "code"]).join(_W["scores"][m].dropna().rename("pred"), how="inner").reset_index()
             icir[m] = ic_stats(ic_series(dd[label_window(dd, first_pred, is_end)], "pred"))["ICIR(年化)"]
         best = max(icir, key=icir.get)
-        score = scores[best][scores[best].index.get_level_values(0) >= first_pred]
+        score = trim(_W["scores"][best])
         lam, _ = calibrate_lambda(score, data, fret, resid, mkt, bench, pcfg, is_end, label=spec["name"],
                                   progress=False)
         bt, info = optimised_backtest(score, data, fret, resid, mkt, {**pcfg, "risk_aversion": lam},
                                       spec["name"], progress=False)
         res = _summ(bt, info, bench, oos_start, S["oos_end"], first_pred, is_end, score, data)
-        res.update({"chosen": chosen, "best": best, "lam": lam})
-    res.update({"name": spec["name"], "group": spec["group"], "label": spec["label"]})
+        res.update({"best": best, "lam": lam})
+    res.update({"name": spec["name"], "group": spec["group"], "label": spec["label"], "key": _key(spec)})
     CACHE.mkdir(parents=True, exist_ok=True)
     pickle.dump(res, open(f, "wb"))
     return res
@@ -153,7 +168,8 @@ def block_bootstrap(x: np.ndarray, block: int = 21, n: int = 5000, seed: int = 0
 def capacity(res_main: dict, long: pd.DataFrame, oos: tuple, aums=(1e8, 5e8, 2e9, 1e10, 5e10),
              y: float = 1.0) -> pd.DataFrame:
     """Square-root impact: cost_i = y * sigma_i * sqrt(Q_i / ADV_i), sigma = 20d daily vol, ADV = 20d mean
-    traded value, both up to the signal date. Q_i = |trade weight| * AUM * NAV on the execution day."""
+    traded value, both up to the signal date. Q_i = |trade weight| * AUM, with AUM the fund size at that
+    rebalance (trade weights are fractions of current NAV), so the drag is a fraction of NAV per year."""
     ret, amt = to_wide(long, "ret"), to_wide(long, "amount")
     sig = ret.rolling(20, min_periods=10).std()
     adv = amt.where(amt > 0).rolling(20, min_periods=10).mean()
@@ -165,7 +181,7 @@ def capacity(res_main: dict, long: pd.DataFrame, oos: tuple, aums=(1e8, 5e8, 2e9
         part, drag, n_big, n_all = [], 0.0, 0, 0
         for d, t in trades.items():
             s_ = dates[dates.searchsorted(d) - 1]                 # signal date (information set)
-            q = t.abs() * aum
+            q = t.abs() * aum                                     # t = traded weight (fraction of NAV), AUM = NAV
             v = adv.loc[s_].reindex(t.index)
             pr = (q / v).replace([np.inf], np.nan)
             part += list(pr.dropna().values)
@@ -205,8 +221,8 @@ if __name__ == "__main__":
     specs = [
         *[{"name": f"lam_{l:g}", "group": "参数", "label": f"{lab} (主方案目标 {target:.0%}, λ = {lam:g})",
            "kind": "constraint", "pcfg": {"risk_aversion": l}} for l, lab in lam_alts.items()],
-        *[{"name": f"model_{m}", "group": "参数", "label": f"模型换成 {m} (样本内选定 {best})", "kind": "constraint",
-           "model": m} for m in other_models],
+        *[{"name": f"model_{m}", "group": "参数", "label": f"模型换成 {m} (样本内选定 {best}; λ 按同一规则重新校准)",
+           "kind": "model", "model": m} for m in other_models],
         {"name": "con_beta_vol", "group": "约束", "label": "Beta 与波动率暴露 ≤ 0.2σ", "kind": "constraint",
          "pcfg": {"style_limits": {"beta": 0.2, "volatility": 0.2}}},
         {"name": "con_all_styles", "group": "约束", "label": "全部 6 个风格暴露 ≤ 0.2σ", "kind": "constraint",
@@ -256,7 +272,7 @@ if __name__ == "__main__":
         boot[per] = {"主动收益年化(算术)": act.mean() * 252, "IR": act.mean() / act.std(ddof=1) * np.sqrt(252),
                      "主动收益 95% 区间": (np.quantile(bs[:, 0], 0.025), np.quantile(bs[:, 0], 0.975)),
                      "IR 95% 区间": (np.quantile(bs[:, 1], 0.025), np.quantile(bs[:, 1], 0.975)),
-                     "P(主动收益≤0)": float((bs[:, 0] <= 0).mean()), "年数": len(act) / 252,
+                     "重抽样中主动收益≤0的比例": float((bs[:, 0] <= 0).mean()), "年数": len(act) / 252,
                      "hist": np.histogram(bs[:, 1], bins=40)}
     print({k: {kk: vv for kk, vv in v.items() if kk != "hist"} for k, v in boot.items()})
 
@@ -277,7 +293,7 @@ if __name__ == "__main__":
     miss = 1 - cov
     miss_y = miss.groupby(miss.index.year).mean()
     sens = pd.DataFrame({"成分股缺数据占比(按数量)": miss_y,
-                         **{f"若缺失股年化跑输 {x:.0%}: 基准高估": miss_y * x for x in (0.2, 0.5)}})
+                         **{f"情景: 缺失股年化跑输 {x:.0%} 时基准高估": miss_y * x for x in (0.2, 0.5)}})
 
     # ---------------- write
     base_row = {"label": "基准方案", "group": "基准"}
@@ -287,10 +303,12 @@ if __name__ == "__main__":
              "信息比率": pm["信息比率"], "跟踪误差": pm["跟踪误差"], "年化单边换手": pm["年化单边换手"], "备注": ""}]
     for r in results:
         note = []
-        if "chosen" in r:
-            note.append(f"{len(r['chosen'])} 个因子, 模型 {r['best']}, λ={r['lam']:g}")
+        if "best" in r:
+            note.append(f"模型 {r['best']}, λ={r['lam']:g}")
+        elif "lam" in r:
+            note.append(f"λ={r['lam']:g}")
         if "n_factors" in r:
-            note.append(f"{r['n_factors']} 个因子")
+            note.append(f"平均 {r['n_factors']:.1f} 个因子")
         if "RankIC" in r["OOS"]:
             note.append(f"样本外 RankIC {r['OOS']['RankIC']:.3f}")
         if r["relaxed_months"]:
@@ -309,7 +327,7 @@ if __name__ == "__main__":
     bshow = pd.DataFrame({k: {"主动收益年化(算术)": pct(v["主动收益年化(算术)"]), "IR": f"{v['IR']:.2f}",
                               "主动收益 95% 区间": f"[{pct(v['主动收益 95% 区间'][0])}, {pct(v['主动收益 95% 区间'][1])}]",
                               "IR 95% 区间": f"[{v['IR 95% 区间'][0]:.2f}, {v['IR 95% 区间'][1]:.2f}]",
-                              "P(主动收益≤0)": pct(v["P(主动收益≤0)"]), "年数": f"{v['年数']:.1f}"}
+                              "重抽样中主动收益≤0的比例": pct(v["重抽样中主动收益≤0的比例"]), "年数": f"{v['年数']:.1f}"}
                           for k, v in boot.items()}).T
     capshow = cap.copy()
     for c in capshow.columns[1:]:
@@ -327,7 +345,8 @@ if __name__ == "__main__":
         "## 2. 交易成本情景 (样本外超额年化, 同一组交易)", "",
         "成本倍数 1 = 佣金万2.5 + 滑点千1 + 印花税; 0 = 无成本。", "", cshow.to_markdown(), "",
         "## 3. 时间序列 Bootstrap (日度主动收益, 循环块长 21 天, 5000 次)", "",
-        "块 Bootstrap 保留了收益的自相关和波动聚集。区间包含 0 说明在常用置信水平下不能拒绝 '没有超额'。", "",
+        "块 Bootstrap 保留了收益的自相关和波动聚集。区间包含 0 说明在常用置信水平下不能拒绝 '没有超额'。"
+        "'重抽样中主动收益≤0的比例' 是围绕样本均值重抽样得到的分布中 ≤0 的占比, 用来直观衡量不确定性, 严格说不是 p 值。", "",
         bshow.to_markdown(), "",
         "## 4. 容量: 成交额参与率与市场冲击", "",
         "按样本外每次调仓的实际交易, 假设资金规模为 AUM: 参与率 = 交易金额 / 该股过去 20 日日均成交额; "
@@ -339,8 +358,8 @@ if __name__ == "__main__":
         "所以本项目的超额应理解为 '相对自定义流通市值基准', 不能直接当作 '中证800 指数增强' 的超额。", "",
         "### 缺失退市股票的敏感性", "",
         "股票池中部分成分股 (主要是后来退市的股票) 拿不到行情, 基准和组合都无法包含它们。"
-        "若这些股票在基准中的实际表现更差, 我们的基准会被高估, 超额被低估; 反之亦然。下表按数量占比给出影响上限 "
-        "(退市股多为小市值, 按市值加权的实际影响更小)。", "",
+        "若这些股票在基准中的实际表现更差, 我们的基准会被高估, 超额被低估; 反之亦然。下表是情景假设 (假设缺失股年化跑输 20% 或 50%), "
+        "按数量占比估算, 不是上限 (退市股多为小市值, 按市值加权的影响通常更小)。", "",
         sens.map(pct).to_markdown(), "",
     ]
     (REPORTS / "robustness.md").write_text("\n".join(md), encoding="utf-8")
@@ -349,7 +368,7 @@ if __name__ == "__main__":
         "variants": var_df.to_dict(orient="records"),
         "costs": cost_df.to_dict(orient="records"),
         "bootstrap": {k: {"mean": v["主动收益年化(算术)"], "ir": v["IR"], "mean_ci": list(v["主动收益 95% 区间"]),
-                          "ir_ci": list(v["IR 95% 区间"]), "p_le0": v["P(主动收益≤0)"], "years": v["年数"],
+                          "ir_ci": list(v["IR 95% 区间"]), "p_le0": v["重抽样中主动收益≤0的比例"], "years": v["年数"],
                           "hist": [v["hist"][0].tolist(), v["hist"][1].tolist()]} for k, v in boot.items()},
         "capacity": cap.to_dict(orient="records"),
         "bench_years": [{"year": int(y), **{k: float(v) for k, v in r.items()}} for y, r in bench_y.iterrows()],

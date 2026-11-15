@@ -91,9 +91,15 @@ def build_html_report(*, res: dict, main: str, top_name: str, bench: pd.Series, 
     ft = factor_tests_is.set_index("因子")
     corr = pd.read_csv(PROC / "factor_corr_is.csv", index_col=0)
     why = _selection_reasons(ft, selected["selected"], corr)
+    wf_path = PROC / "factor_selection.parquet"
+    wf_share = {}
+    if wf_path.exists():
+        wf = pd.read_parquet(wf_path)
+        wf = wf[(wf != 0).any(axis=1)]
+        wf_share = (wf != 0).mean().to_dict()
     factors = [{"code": f, "short": SHORT_CN.get(f, f), "why": why[f], "name": FACTOR_INFO[f][1], "cat": FACTOR_INFO[f][0], "t": _num(ft.loc[f, "t值"], 3),
                 "icir": _num(ft.loc[f, "ICIR(年化)"], 3), "selected": f in sel,
-                "sign": selected["signs"].get(f)} for f in ft.index if f in FACTOR_INFO]
+                "sign": selected["signs"].get(f), "wf_share": _num(wf_share.get(f), 3)} for f in ft.index if f in FACTOR_INFO]
 
     snap = latest_snapshot(holdings_main, data)
     cur = snap["cur"]
