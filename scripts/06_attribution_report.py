@@ -14,6 +14,7 @@ from mf.attribution import active_exposure_series, brinson, factor_attribution
 from mf.config import CFG, FIG, PROC, REPORTS
 from mf.dataset import load_dataset
 from mf.holdings import write_holdings
+from mf.html_report import build_html_report, write_html_report
 from mf.metrics import fmt_table, perf, yearly_table
 from mf.panel import load_benchmarks, load_index, load_long, to_wide
 from mf.plotting import setup_style
@@ -144,9 +145,20 @@ if __name__ == "__main__":
     n = CFG["portfolio"]["topn"]
     top = {d: pd.Series(1.0 / min(n, len(s)), index=s.droplevel(0).nlargest(n).index)
            for d, s in scores[best].dropna().groupby(level=0)}
-    write_holdings({main: (bt["opt_targets"], scores[best]), f"Top{n}等权({best})": (top, scores[best])},
-                   data, opt_info, main)
+    top_name = f"Top{n}等权({best})"
+    tables = write_holdings({main: (bt["opt_targets"], scores[best]), top_name: (top, scores[best])},
+                            data, opt_info, main)
     print("holdings written to", REPORTS / "holdings")
+
+    # ---------------- interactive HTML report (one per run)
+    payload = build_html_report(
+        res=res, main=main, top_name=top_name, bench=bench, tri=tri, opt_info=opt_info, perf_tabs=perf_tabs,
+        yearly=yearly, model_eval=model_eval, calib=calib, lam=bt["lam"], best=best, first_pred=first_pred,
+        scores=scores[best], data=data, br_df=br_df, fa_df=fa_df, oos_br=oos_br, holdings_main=tables[main],
+        factor_tests_is=pd.read_csv(PROC / "factor_tests_is.csv"),
+        selected=json.load(open(PROC / "selected_factors.json")))
+    for p in write_html_report(payload):
+        print("HTML report written to", p)
     for k, v in perf_tabs.items():
         print(k); print(v.to_string())
     print(br_df); print(fa_df)

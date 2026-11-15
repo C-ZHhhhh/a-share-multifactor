@@ -315,4 +315,4 @@ git clone https://github.com/C-ZHhhhh/a-share-multifactor.git && cd a-share-mult
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 bash run_all.sh        # 首次运行约 50 分钟（主要是下载），之后约 4 分钟
 ```
-详细的运行、参数修改和输出说明见 [README](../README.md#复现与使用)。
+运行结束后用浏览器打开 `reports/report.html`，即可看到本次运行的交互式可视化报告；每次运行还会在 `reports/runs/` 留一份带时间戳的副本。详细的运行、参数修改和输出说明见 [README](../README.md#复现与使用)。

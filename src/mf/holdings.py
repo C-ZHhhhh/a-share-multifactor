@@ -55,17 +55,30 @@ def write_holdings(portfolios: dict[str, tuple[dict, pd.Series]], data: pd.DataF
     return tables
 
 
-def _latest_report(t: pd.DataFrame, data: pd.DataFrame, opt_info: pd.DataFrame, main: str):
+def latest_snapshot(t: pd.DataFrame, data: pd.DataFrame) -> dict:
+    """The latest month's holdings with month-on-month changes, sold names, benchmark top-10 and
+    industry active weights. Shared by latest_portfolio.md and the HTML report."""
     d = t.signal_date.max()
     cur = t[t.signal_date == d].copy()
     prev_d = sorted(t.signal_date.unique())[-2]
     prev = t[t.signal_date == prev_d].set_index("code").weight
     cur["change"] = (cur.weight - prev.reindex(cur.code).fillna(0).values).round(4) + 0.0  # +0.0: no "-0.00%"
-    sold = prev.index.difference(cur.code)
-    info = opt_info.loc[pd.Timestamp(d)]
+    cur["is_new"] = ~cur.code.isin(prev.index)
     b = bench_weights(data, pd.Timestamp(d))
+    g = data[data.date == pd.Timestamp(d)].set_index("code")
+    bind = b.groupby(g.industry).sum()
+    ind = cur.groupby("industry").weight.sum().reindex(bind.index.union(cur.industry.unique())).fillna(0) \
+        .sub(bind, fill_value=0).sort_values()
+    return {"date": d, "cur": cur, "prev": prev, "sold": prev.index.difference(cur.code), "bench": b,
+            "industry_active": ind, "n_ranked": int(cur.n_ranked.iloc[0])}
+
+
+def _latest_report(t: pd.DataFrame, data: pd.DataFrame, opt_info: pd.DataFrame, main: str):
+    snap = latest_snapshot(t, data)
+    d, cur, prev, sold, b = snap["date"], snap["cur"], snap["prev"], snap["sold"], snap["bench"]
+    info = opt_info.loc[pd.Timestamp(d)]
     names = _names()
-    n_ranked = int(cur.n_ranked.iloc[0])
+    n_ranked = snap["n_ranked"]
 
     pct = lambda x: f"{x:.2%}"
     show = cur.assign(**{
@@ -73,7 +86,7 @@ def _latest_report(t: pd.DataFrame, data: pd.DataFrame, opt_info: pd.DataFrame, 
         "主动权重": cur.active_weight.map(lambda x: f"{x:+.2%}"),
         "较上月": cur.change.map(lambda x: f"{x:+.2%}"),
         "模型排名": cur.model_rank.map(lambda x: f"{int(x)} / {n_ranked}")})
-    new_codes = set(cur.code) - set(prev.index)
+    new_codes = set(cur.code[cur.is_new])
     show.loc[show.code.isin(new_codes), "较上月"] = "新买入"
     show = show.rename(columns={"code": "代码", "name": "名称", "industry": "行业"})
     show = show[["代码", "名称", "行业", "权重", "基准权重", "主动权重", "较上月", "模型排名"]]
@@ -84,10 +97,8 @@ def _latest_report(t: pd.DataFrame, data: pd.DataFrame, opt_info: pd.DataFrame, 
                         "组合权重": wmap.reindex(top_b.index).fillna(0).map(pct)})
     big.index.name = "代码"
 
-    bind = b.groupby(data[data.date == pd.Timestamp(d)].set_index("code").industry).sum()
-    ind = cur.groupby("industry").weight.sum().reindex(bind.index.union(cur.industry.unique())).fillna(0) \
-        .sub(bind, fill_value=0)
-    ind = ind[ind.abs() >= 0.005].sort_values()
+    ind = snap["industry_active"]
+    ind = ind[ind.abs() >= 0.005]
     ind.index.name = "行业"
     md = [
         "# 最新一期组合 (自动生成)", "",

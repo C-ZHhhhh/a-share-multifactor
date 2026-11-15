@@ -7,7 +7,7 @@
 
 **A股多因子选股与动态组合优化**　个人项目　Python / pandas / scikit-learn / cvxpy　 [github.com/C-ZHhhhh/a-share-multifactor](https://github.com/C-ZHhhhh/a-share-multifactor)
 
-- 搭建端到端的量化研究框架（数据 → 因子 → 模型 → 优化 → 回测 → 归因），覆盖时点中证800股票池（1,435 只股票、365 万条日度记录），并编写 9 个单元测试来防止前视偏差。
+- 搭建端到端的量化研究框架（数据 → 因子 → 模型 → 优化 → 回测 → 归因），覆盖时点中证800股票池（1,435 只股票、365 万条日度记录），并编写 单元测试来防止前视偏差。
 - 设计数据质量审计并做跨源交叉验证：日收益与独立数据源的一致率为 99.95%，ST 推断精确率为 82%。在审计中发现财报"最新公告日"并不是首次披露日，改用法定截止日估算，使基本面因子的缺失率从 27% 降到 0.3%。
 - 构建价值、质量、成长、动量、波动、流动性、量价等 19 个因子，经过 MAD 去极值、行业与市值中性化后做 RankIC 检验，在样本内筛选出 11 个；低风险类因子的样本外年化 ICIR 稳定在 1.4–1.9。
 - 用 walk-forward 方式训练 ICIR 加权、Ridge、GBDT 三种模型，训练集与预测期之间留 1 个月 gap 防止标签泄漏；按样本内 ICIR 选出的 Ridge 模型，样本外 RankIC 为 0.057、ICIR 为 1.49。
@@ -23,7 +23,7 @@
 
 **A-Share Multi-Factor Stock Selection & Portfolio Optimisation**　Personal project　Python, pandas, scikit-learn, cvxpy
 
-- Built an end-to-end quant research pipeline (data → factors → models → optimisation → backtest → attribution) on a point-in-time CSI 800 universe (1,435 stocks, 3.65M stock-days), with 9 unit tests guarding against look-ahead bias.
+- Built an end-to-end quant research pipeline (data → factors → models → optimisation → backtest → attribution) on a point-in-time CSI 800 universe (1,435 stocks, 3.65M stock-days), with unit tests guarding against look-ahead bias.
 - Designed a data-quality audit with cross-source validation (99.95% daily-return agreement; 82% precision on inferred ST flags). Found that the vendor's "latest announcement date" is not the first release date and re-estimated it from statutory deadlines, cutting missing fundamentals from 27% to 0.3%.
 - Engineered 19 factors (value, quality, growth, momentum, volatility, liquidity, price-volume). After MAD winsorisation and industry/size neutralisation, tested them with RankIC and selected 11 in-sample; the low-risk factors kept an out-of-sample annualised ICIR of 1.4–1.9.
 - Trained walk-forward ICIR-weighted, Ridge and gradient-boosting models, leaving a 1-month gap between training labels and the prediction date to prevent label leakage. The Ridge model, chosen on in-sample ICIR, delivered an OOS RankIC of 0.057 (ICIR 1.49).

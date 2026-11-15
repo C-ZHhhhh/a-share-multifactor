@@ -1,0 +1,560 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>多因子回测报告</title>
+<style>
+:root {
+  color-scheme: light;
+  --surface-0: #f4f3f0; --surface-1: #fcfcfb; --border: #e3e2de; --grid: #ebeae6;
+  --text-primary: #0b0b0b; --text-secondary: #52514e; --text-muted: #7a7974;
+  --series-1: #2a78d6; --series-2: #eb6834; --series-bench: #8a8984;
+  --pos: #2a78d6; --neg: #e34948; --neutral: #c9c8c2;
+  --shade: rgba(237, 161, 0, 0.08); --accent-wash: rgba(42, 120, 214, 0.08);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --surface-0: #111110; --surface-1: #1a1a19; --border: #2e2e2c; --grid: #262624;
+    --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #8f8e88;
+    --series-1: #3987e5; --series-2: #d95926; --series-bench: #8f8e88;
+    --pos: #3987e5; --neg: #e66767; --neutral: #4a4a46;
+    --shade: rgba(201, 133, 0, 0.10); --accent-wash: rgba(57, 135, 229, 0.12);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface-0: #111110; --surface-1: #1a1a19; --border: #2e2e2c; --grid: #262624;
+  --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #8f8e88;
+  --series-1: #3987e5; --series-2: #d95926; --series-bench: #8f8e88;
+  --pos: #3987e5; --neg: #e66767; --neutral: #4a4a46;
+  --shade: rgba(201, 133, 0, 0.10); --accent-wash: rgba(57, 135, 229, 0.12);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--surface-0); color: var(--text-primary);
+  font: 14px/1.6 -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+        "Noto Sans CJK SC", "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 1120px; margin: 0 auto; padding: 32px 16px 64px; }
+header h1 { font-size: 26px; line-height: 1.3; margin: 0 0 6px; letter-spacing: -0.01em; }
+.meta { color: var(--text-secondary); font-size: 13px; display: flex; flex-wrap: wrap; gap: 4px 18px; }
+.meta b { color: var(--text-primary); font-weight: 600; }
+.note { margin: 14px 0 0; padding: 10px 14px; border-left: 3px solid var(--border); color: var(--text-secondary);
+        font-size: 13px; background: var(--surface-1); border-radius: 0 6px 6px 0; }
+.toolbar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+           padding: 12px 0; margin-top: 18px; background: var(--surface-0); }
+.toolbar .lbl { color: var(--text-secondary); font-size: 13px; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--surface-1); }
+.seg button { font: inherit; font-size: 13px; border: 0; background: transparent; color: var(--text-secondary);
+              padding: 6px 14px; cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--border); }
+.seg button[aria-pressed="true"] { background: var(--accent-wash); color: var(--text-primary); font-weight: 600; }
+.seg button:focus-visible { outline: 2px solid var(--series-1); outline-offset: -2px; }
+.range-desc { color: var(--text-muted); font-size: 12px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.tile { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+.tile .k { color: var(--text-secondary); font-size: 12.5px; }
+.tile .v { font-size: 24px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.35; }
+.tile .s { color: var(--text-muted); font-size: 12px; }
+section { margin-top: 36px; }
+section > h2 { font-size: 19px; margin: 0 0 4px; }
+section > .lead { color: var(--text-secondary); margin: 0 0 14px; font-size: 13.5px; max-width: 820px; }
+.card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 16px 16px 12px; }
+.card + .card, .grid2 + .card, .card + .grid2 { margin-top: 14px; }
+.card h3 { font-size: 14.5px; margin: 0 0 2px; }
+.card .sub { color: var(--text-muted); font-size: 12.5px; margin: 0 0 8px; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; }
+.grid3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+.chart { position: relative; width: 100%; }
+.chart svg { display: block; width: 100%; overflow: visible; }
+.chart svg:focus { outline: none; }
+.chart svg:focus-visible { outline: 2px solid var(--series-1); outline-offset: 4px; border-radius: 4px; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12.5px; color: var(--text-secondary); margin: 0 0 6px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { display: inline-block; width: 16px; height: 0; border-top: 2px solid; }
+.legend i.box { width: 10px; height: 10px; border: 0; border-radius: 2px; }
+.legend i.dash { border-top-style: dashed; }
+.tip { position: absolute; pointer-events: none; background: var(--surface-1); border: 1px solid var(--border);
+       border-radius: 8px; padding: 7px 10px; font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,.12);
+       white-space: nowrap; z-index: 3; display: none; }
+.tip .d { color: var(--text-muted); margin-bottom: 3px; }
+.tip .row { display: flex; align-items: center; gap: 8px; }
+.tip .row i { width: 12px; border-top: 2px solid; }
+.tip .row b { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--text-primary); }
+.tip .row span { color: var(--text-secondary); }
+svg text { fill: var(--text-muted); font-size: 11px; font-family: inherit; }
+svg text.lab { fill: var(--text-secondary); }
+svg text.val { fill: var(--text-primary); font-variant-numeric: tabular-nums; }
+.tbl-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+table { border-collapse: collapse; width: 100%; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+th, td { padding: 6px 10px; text-align: right; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+th { color: var(--text-secondary); font-weight: 600; position: sticky; top: 0; background: var(--surface-1); }
+th:first-child, td:first-child { text-align: left; }
+td.l, th.l { text-align: left; }
+tr.hl td { background: var(--accent-wash); font-weight: 600; }
+th.sortable { cursor: pointer; user-select: none; }
+th.sortable:hover { color: var(--text-primary); }
+.tag { display: inline-block; font-size: 11px; padding: 0 6px; border-radius: 4px; border: 1px solid var(--border);
+       color: var(--text-secondary); }
+.scroll-y { max-height: 460px; overflow: auto; }
+details { margin-top: 10px; }
+details summary { cursor: pointer; color: var(--text-secondary); font-size: 13px; }
+.kv { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 6px 18px; font-size: 13px;
+      color: var(--text-secondary); }
+.kv b { color: var(--text-primary); font-weight: 600; font-variant-numeric: tabular-nums; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; background: var(--grid);
+       padding: 1px 5px; border-radius: 4px; }
+pre { background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; padding: 12px; overflow-x: auto; font-size: 12.5px; }
+footer { margin-top: 40px; color: var(--text-muted); font-size: 12.5px; }
+@media (max-width: 560px) { header h1 { font-size: 21px; } .tile .v { font-size: 20px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>A股多因子选股与组合优化 · 回测报告</h1>
+    <div class="meta" id="meta"></div>
+    <p class="note">每次运行 <code>run_all.sh</code> 时自动生成。所有数字都来自本次运行的数据与代码，是历史回测的研究输出，不构成投资建议。</p>
+  </header>
+
+  <div class="toolbar" role="toolbar" aria-label="区间">
+    <span class="lbl">区间</span>
+    <div class="seg" id="range">
+      <button data-r="all" aria-pressed="false">全部</button>
+      <button data-r="is" aria-pressed="false">样本内</button>
+      <button data-r="oos" aria-pressed="true">样本外</button>
+    </div>
+    <span class="range-desc" id="rangeDesc"></span>
+  </div>
+
+  <div class="tiles" id="tiles"></div>
+
+  <section>
+    <h2>1. 净值与超额收益</h2>
+    <p class="lead">净值从所选区间第一天起算为 1，已扣交易成本。基准是时点中证800成分股按流通市值加权的全收益组合，也就是优化器跟踪的对象。"超额净值" = 组合净值 ÷ 基准净值，向上表示跑赢。</p>
+    <div class="card"><h3>净值曲线</h3><p class="sub" id="navSub"></p><div class="legend" id="navLegend"></div><div class="chart" id="navChart"></div></div>
+    <div class="grid2">
+      <div class="card"><h3>超额净值（相对基准）</h3><p class="sub" id="exSub"></p><div class="legend" id="exLegend"></div><div class="chart" id="exChart"></div></div>
+      <div class="card"><h3>超额回撤</h3><p class="sub">超额净值相对此前最高点的回落幅度</p><div class="chart" id="ddChart"></div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>2. 分年度表现</h2>
+    <p class="lead">每根柱子是一年的超额收益（组合相对基准），蓝色跑赢、红色跑输。悬停可看组合和基准各自的收益。</p>
+    <div class="card"><div class="chart" id="yearChart"></div>
+      <details><summary>查看数据表</summary><div class="tbl-wrap" id="yearTable"></div></details></div>
+  </section>
+
+  <section>
+    <h2>3. 选股信号：模型打分准不准</h2>
+    <p class="lead">RankIC：每个月末，模型给股票的打分排名和下个月真实收益排名的相关系数。大于 0 说明打分方向对，A 股多因子通常在 0.03–0.08。累计 IC 稳定向上，说明信号持续有效。</p>
+    <div class="tiles" id="icTiles" style="margin-bottom:14px"></div>
+    <div class="grid2">
+      <div class="card"><h3>每月 RankIC</h3><p class="sub" id="icSub"></p><div class="chart" id="icChart"></div></div>
+      <div class="card"><h3>累计 RankIC</h3><p class="sub">把每月 IC 加起来；黄色底色为样本外</p><div class="chart" id="cumIcChart"></div></div>
+    </div>
+    <div class="card"><h3>三个候选模型对比</h3><p class="sub">只按样本内 ICIR 选模型，样本外仅用于最终检验</p><div class="tbl-wrap" id="modelTable"></div></div>
+  </section>
+
+  <section>
+    <h2>4. 因子筛选</h2>
+    <p class="lead">19 个候选因子在样本内逐个检验，t 值的绝对值至少为 2（虚线）才有资格入选，再按 ICIR 从高到低挑选、去掉和已入选因子太像的。悬停可看每个因子的定义和入选或落选原因。负的 t 值表示因子值越小、未来收益越高，入选后按反方向使用。</p>
+    <div class="card"><div class="legend"><span><i class="box" style="background:var(--series-1)"></i>入选</span><span><i class="box" style="background:var(--neutral)"></i>未入选</span></div><div class="chart" id="factorChart"></div><p class="sub" id="factorNote" style="margin-top:8px"></p></div>
+  </section>
+
+  <section>
+    <h2>5. 最新一期组合</h2>
+    <p class="lead" id="latestLead"></p>
+    <div class="tiles" id="latestTiles" style="margin-bottom:14px"></div>
+    <div class="grid2">
+      <div class="card"><h3>行业主动权重</h3><p class="sub">组合行业权重 − 基准行业权重，仅列 |偏离| ≥ 0.5%（最多超配、低配各 8 个），约束上限 ±5%</p><div class="chart" id="indChart"></div></div>
+      <div class="card"><h3>基准前 10 大权重股的处理</h3><p class="sub">大市值股票不一定按基准持有：排名低的可能被完全剔除</p><div class="tbl-wrap" id="benchTopTable"></div></div>
+    </div>
+    <div class="card"><h3>全部持仓</h3><p class="sub">点击表头排序。模型排名 1 = 最看好。"主动权重" = 组合权重 − 基准权重</p><div class="tbl-wrap scroll-y" id="holdTable"></div>
+      <p class="sub" id="soldList" style="margin-top:10px"></p></div>
+  </section>
+
+  <section>
+    <h2>6. 收益从哪里来：归因</h2>
+    <p class="lead">把组合相对基准的超额收益拆开。Brinson 归因按行业拆成"行业配置"和"行业内选股"；因子归因用风险模型拆成各风格因子的贡献，剩下的就是真正的个股选择能力（含交易）。</p>
+    <div class="card"><h3>Brinson 行业归因（年化）</h3><div class="tbl-wrap" id="brinsonTable"></div></div>
+    <div class="grid2">
+      <div class="card"><h3>因子归因 · 样本内</h3><p class="sub">年化主动收益贡献</p><div class="chart" id="faIS"></div></div>
+      <div class="card"><h3>因子归因 · 样本外</h3><p class="sub">年化主动收益贡献</p><div class="chart" id="faOOS"></div></div>
+    </div>
+    <div class="card"><h3>样本外贡献最大和最小的行业（累计）</h3><div class="chart" id="oosIndChart"></div></div>
+  </section>
+
+  <section>
+    <h2>7. 优化器诊断</h2>
+    <p class="lead">每月调仓时优化器的状态。事前跟踪误差是风险模型预测的组合偏离基准的程度；换手受 40% 上限约束。</p>
+    <div class="grid3">
+      <div class="card"><h3>事前跟踪误差（年化）</h3><div class="chart" id="teChart"></div></div>
+      <div class="card"><h3>持仓股票数</h3><div class="chart" id="nChart"></div></div>
+      <div class="card"><h3>单边换手（每次调仓）</h3><div class="chart" id="toChart"></div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>8. 完整绩效表</h2>
+    <p class="lead">与 <code>reports/results.md</code> 中的表格完全一致。高亮行是正式组合。</p>
+    <div class="card"><h3>样本内</h3><div class="tbl-wrap" id="perfIS"></div></div>
+    <div class="card"><h3>样本外</h3><div class="tbl-wrap" id="perfOOS"></div></div>
+    <div class="card"><h3>风险厌恶系数 λ 校准（仅样本内）</h3><p class="sub">λ 越大越怕偏离基准；按样本内信息比率选定</p><div class="tbl-wrap" id="calibTable"></div></div>
+    <div class="card"><h3>本次运行的参数</h3><div class="kv" id="params"></div></div>
+  </section>
+
+  <footer>
+    <p>复现：<code>bash run_all.sh</code>。本页是 <code>reports/report.html</code>，每次运行还会在 <code>reports/runs/</code> 留一份带时间戳的副本，方便对比不同次运行。</p>
+  </footer>
+</div>
+
+<script>
+const D = /*__DATA__*/null;
+const NS = "http://www.w3.org/2000/svg";
+const $ = id => document.getElementById(id);
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const pct = (v, d = 2) => v == null ? "-" : (v * 100).toFixed(d) + "%";
+const spct = (v, d = 2) => v == null ? "-" : (v > 0 ? "+" : v < 0 ? "−" : "") + (Math.abs(v) * 100).toFixed(d) + "%";
+const num = (v, d = 2) => v == null ? "-" : (v < 0 ? "−" : "") + Math.abs(v).toFixed(d);
+function el(tag, attrs = {}, parent) {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+function h(tag, text, cls) { const e = document.createElement(tag); if (text != null) e.textContent = text; if (cls) e.className = cls; return e; }
+
+// ---------- nice ticks
+function niceTicks(lo, hi, n = 5) {
+  if (lo === hi) { lo -= 1; hi += 1; }
+  const span = hi - lo, step0 = span / n, mag = Math.pow(10, Math.floor(Math.log10(step0)));
+  const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => span / s <= n) || 10 * mag;
+  const t = [];
+  for (let v = Math.ceil(lo / step - 1e-9) * step; v <= hi + 1e-9; v += step) t.push(+v.toFixed(10));
+  return { ticks: t, lo: Math.min(lo, t[0]), hi: Math.max(hi, t[t.length - 1]) };
+}
+function roundedBar(x0, x1, y0, y1, end) {   // rect with 4px rounded data-end; end: right/left/top/bottom
+  const w = Math.abs(x1 - x0), hh = Math.abs(y1 - y0);
+  const X0 = Math.min(x0, x1), X1 = Math.max(x0, x1), Y0 = Math.min(y0, y1), Y1 = Math.max(y0, y1);
+  const r = Math.min(4, (end === "right" || end === "left") ? Math.min(w, hh / 2) : Math.min(hh, w / 2));
+  if (r <= 0.5) return `M${X0},${Y0}H${X1}V${Y1}H${X0}Z`;
+  if (end === "right") return `M${X0},${Y0}H${X1 - r}Q${X1},${Y0} ${X1},${Y0 + r}V${Y1 - r}Q${X1},${Y1} ${X1 - r},${Y1}H${X0}Z`;
+  if (end === "left") return `M${X1},${Y0}H${X0 + r}Q${X0},${Y0} ${X0},${Y0 + r}V${Y1 - r}Q${X0},${Y1} ${X0 + r},${Y1}H${X1}Z`;
+  if (end === "top") return `M${X0},${Y1}V${Y0 + r}Q${X0},${Y0} ${X0 + r},${Y0}H${X1 - r}Q${X1},${Y0} ${X1},${Y0 + r}V${Y1}Z`;
+  return `M${X0},${Y0}V${Y1 - r}Q${X0},${Y1} ${X0 + r},${Y1}H${X1 - r}Q${X1},${Y1} ${X1},${Y1 - r}V${Y0}Z`;
+}
+function tipFor(container) {
+  let t = container.querySelector(".tip");
+  if (!t) { t = h("div", null, "tip"); container.appendChild(t); }
+  return t;
+}
+function placeTip(tip, container, x, y) {
+  tip.style.display = "block";
+  const cw = container.clientWidth, tw = tip.offsetWidth;
+  let left = x + 14; if (left + tw > cw) left = x - tw - 14; if (left < 0) left = 0;
+  tip.style.left = left + "px"; tip.style.top = Math.max(0, y - 10) + "px";
+}
+function fillTip(tip, title, rows) {
+  tip.replaceChildren(h("div", title, "d"));
+  for (const r of rows) {
+    const row = h("div", null, "row");
+    if (r.color) { const i = h("i"); i.style.borderColor = r.color; if (r.dash) i.style.borderTopStyle = "dashed"; row.appendChild(i); }
+    row.appendChild(h("b", r.value)); row.appendChild(h("span", r.name)); tip.appendChild(row);
+  }
+}
+function legend(id, items) {
+  const L = $(id); L.replaceChildren();
+  for (const it of items) {
+    const s = h("span"); const i = h("i", null, (it.box ? "box" : "") + (it.dash ? " dash" : ""));
+    if (it.box) i.style.background = it.color; else i.style.borderColor = it.color;
+    s.appendChild(i); s.appendChild(document.createTextNode(it.name)); L.appendChild(s);
+  }
+}
+
+// ---------- line chart: x = index positions, dates for labels
+function lineChart(container, { dates, series, yfmt = v => v.toFixed(2), height = 300, shadeFrom = null, baseline = null, area = false, tipFmt }) {
+  container.replaceChildren();
+  const W = container.clientWidth || 600, H = height, m = { l: 52, r: 14, t: 10, b: 24 };
+  const iw = W - m.l - m.r, ih = H - m.t - m.b, n = dates.length;
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, height: H, tabindex: 0, role: "img" }, container);
+  let lo = Infinity, hi = -Infinity;
+  for (const s of series) for (const v of s.values) if (v != null) { if (v < lo) lo = v; if (v > hi) hi = v; }
+  if (baseline != null) { lo = Math.min(lo, baseline); hi = Math.max(hi, baseline); }
+  const pad = (hi - lo) * 0.05; const nt = niceTicks(lo - pad, hi + pad, H < 220 ? 3 : 5);
+  const x = i => m.l + (n <= 1 ? 0 : i / (n - 1) * iw), y = v => m.t + (nt.hi - v) / (nt.hi - nt.lo) * ih;
+  // OOS shading
+  if (shadeFrom != null) {
+    const i0 = dates.findIndex(d => d >= shadeFrom);
+    if (i0 >= 0) { el("rect", { x: x(i0), y: m.t, width: x(n - 1) - x(i0), height: ih, fill: css("--shade") }, svg);
+      const t = el("text", { x: x(i0) + 6, y: m.t + 13 }, svg); t.textContent = "样本外 →"; }
+  }
+  for (const v of nt.ticks) {
+    el("line", { x1: m.l, x2: W - m.r, y1: y(v), y2: y(v), stroke: css("--grid"), "stroke-width": 1 }, svg);
+    const t = el("text", { x: m.l - 8, y: y(v) + 4, "text-anchor": "end" }, svg); t.textContent = yfmt(v);
+  }
+  if (baseline != null) el("line", { x1: m.l, x2: W - m.r, y1: y(baseline), y2: y(baseline), stroke: css("--text-muted"), "stroke-width": 1 }, svg);
+  // x ticks: first point of each year (or month when short)
+  const years = []; let last = "";
+  const span = n > 1 ? (new Date(dates[n - 1]) - new Date(dates[0])) / 864e5 : 0;
+  const key = span > 500 ? d => d.slice(0, 4) : d => d.slice(0, 7);
+  dates.forEach((d, i) => { const k = key(d); if (k !== last) { years.push([i, k]); last = k; } });
+  const minGap = 46; let lastX = -1e9;
+  for (const [i, k] of years) {
+    if (x(i) - lastX < minGap || x(i) > W - m.r - 20) continue; lastX = x(i);
+    const t = el("text", { x: x(i), y: H - 6, "text-anchor": "middle" }, svg); t.textContent = span > 500 ? k : k.slice(2).replace("-", "/");
+  }
+  for (const s of series) {
+    let dpath = "", started = false;
+    s.values.forEach((v, i) => { if (v == null) { started = false; return; } dpath += (started ? "L" : "M") + x(i).toFixed(1) + "," + y(v).toFixed(1); started = true; });
+    if (area && s === series[0]) {
+      const b = baseline ?? 0;
+      el("path", { d: dpath + `L${x(n - 1)},${y(b)}L${x(0)},${y(b)}Z`, fill: s.color, opacity: 0.12 }, svg);
+    }
+    el("path", { d: dpath, fill: "none", stroke: s.color, "stroke-width": s.width || 2, "stroke-linejoin": "round",
+                 "stroke-linecap": "round", "stroke-dasharray": s.dash ? "5 4" : "none" }, svg);
+  }
+  // hover layer
+  const tip = tipFor(container);
+  const cross = el("line", { y1: m.t, y2: m.t + ih, stroke: css("--text-muted"), "stroke-width": 1, visibility: "hidden" }, svg);
+  const dots = series.map(s => el("circle", { r: 4, fill: s.color, stroke: css("--surface-1"), "stroke-width": 2, visibility: "hidden" }, svg));
+  let cur = n - 1;
+  function show(i) {
+    cur = Math.max(0, Math.min(n - 1, i));
+    cross.setAttribute("x1", x(cur)); cross.setAttribute("x2", x(cur)); cross.setAttribute("visibility", "visible");
+    series.forEach((s, k) => { const v = s.values[cur]; if (v == null) { dots[k].setAttribute("visibility", "hidden"); return; }
+      dots[k].setAttribute("cx", x(cur)); dots[k].setAttribute("cy", y(v)); dots[k].setAttribute("visibility", "visible"); });
+    fillTip(tip, dates[cur], series.map(s => ({ color: s.color, dash: s.dash, name: s.name, value: (tipFmt || yfmt)(s.values[cur]) })));
+    const rect = svg.getBoundingClientRect(), scale = rect.width / W;
+    placeTip(tip, container, x(cur) * scale, m.t * scale);
+  }
+  function hide() { cross.setAttribute("visibility", "hidden"); dots.forEach(d => d.setAttribute("visibility", "hidden")); tip.style.display = "none"; }
+  const hit = el("rect", { x: m.l, y: m.t, width: iw, height: ih, fill: "transparent" }, svg);
+  hit.addEventListener("pointermove", e => { const r = svg.getBoundingClientRect(); const px = (e.clientX - r.left) * W / r.width;
+    show(Math.round((px - m.l) / iw * (n - 1))); });
+  hit.addEventListener("pointerleave", hide);
+  svg.addEventListener("focus", () => show(cur)); svg.addEventListener("blur", hide);
+  svg.addEventListener("keydown", e => { if (e.key === "ArrowLeft") { show(cur - Math.max(1, Math.round(n / 100))); e.preventDefault(); }
+    if (e.key === "ArrowRight") { show(cur + Math.max(1, Math.round(n / 100))); e.preventDefault(); } });
+}
+
+// ---------- horizontal bars (diverging around 0)
+function hBars(container, { items, fmt = spct, color, thresholds = [], labelW }) {
+  container.replaceChildren();
+  const W = container.clientWidth || 500, row = 24, gap = 6;
+  const lw = labelW || Math.min(200, Math.max(70, Math.max(...items.map(it => it.name.length)) * 12.5 + 8));
+  const valW = 58, m = { t: 6, b: 18 };
+  const H = m.t + m.b + items.length * (row + gap);
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img" }, container);
+  let lo = Math.min(0, ...items.map(i => i.value), ...thresholds), hi = Math.max(0, ...items.map(i => i.value), ...thresholds);
+  const nt = niceTicks(lo, hi, 4);
+  const x0 = lw + valW * (nt.lo < 0 ? 1 : 0), x1 = W - valW;
+  const x = v => x0 + (v - nt.lo) / (nt.hi - nt.lo) * (x1 - x0);
+  for (const v of nt.ticks) {
+    el("line", { x1: x(v), x2: x(v), y1: m.t, y2: H - m.b, stroke: css("--grid"), "stroke-width": 1 }, svg);
+    const t = el("text", { x: x(v), y: H - 4, "text-anchor": "middle" }, svg); t.textContent = fmt(v).replace(/\.0+%$/, "%");
+  }
+  for (const th of thresholds) el("line", { x1: x(th), x2: x(th), y1: m.t, y2: H - m.b, stroke: css("--text-muted"), "stroke-width": 1, "stroke-dasharray": "4 3" }, svg);
+  el("line", { x1: x(0), x2: x(0), y1: m.t, y2: H - m.b, stroke: css("--text-muted"), "stroke-width": 1 }, svg);
+  const tip = tipFor(container);
+  items.forEach((it, k) => {
+    const yy = m.t + k * (row + gap), bh = Math.min(16, row - 6), by = yy + (row - bh) / 2;
+    const lab = el("text", { x: 0, y: yy + row / 2 + 4, class: "lab" }, svg); lab.textContent = it.name;
+    const c = color ? color(it) : (it.value >= 0 ? css("--pos") : css("--neg"));
+    const p = el("path", { d: roundedBar(x(0), x(it.value), by, by + bh, it.value >= 0 ? "right" : "left"), fill: c }, svg);
+    const vt = el("text", { x: it.value >= 0 ? x(it.value) + 6 : x(it.value) - 6, y: yy + row / 2 + 4,
+                            "text-anchor": it.value >= 0 ? "start" : "end", class: "val" }, svg);
+    vt.textContent = fmt(it.value);
+    const hit = el("rect", { x: 0, y: yy - gap / 2, width: W, height: row + gap, fill: "transparent" }, svg);
+    hit.addEventListener("pointermove", e => { p.setAttribute("opacity", 0.8); const r = container.getBoundingClientRect();
+      fillTip(tip, it.name, it.tip || [{ color: c, name: "", value: fmt(it.value) }]); placeTip(tip, container, e.clientX - r.left, e.clientY - r.top); });
+    hit.addEventListener("pointerleave", () => { p.removeAttribute("opacity"); tip.style.display = "none"; });
+  });
+}
+
+// ---------- vertical columns
+function columns(container, { items, fmt = spct, height = 260 }) {
+  container.replaceChildren();
+  const W = container.clientWidth || 600, H = height, m = { l: 48, r: 8, t: 20, b: 24 };
+  const iw = W - m.l - m.r, ih = H - m.t - m.b, n = items.length;
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img" }, container);
+  const vlo = Math.min(0, ...items.map(i => i.value)), vhi = Math.max(0, ...items.map(i => i.value)), vpad = (vhi - vlo) * 0.12;
+  const nt = niceTicks(vlo - (vlo < 0 ? vpad : 0), vhi + (vhi > 0 ? vpad : 0), 4);
+  const y = v => m.t + (nt.hi - v) / (nt.hi - nt.lo) * ih, band = iw / n, bw = Math.max(1, Math.min(24, band * 0.7));
+  for (const v of nt.ticks) {
+    el("line", { x1: m.l, x2: W - m.r, y1: y(v), y2: y(v), stroke: css("--grid"), "stroke-width": 1 }, svg);
+    const t = el("text", { x: m.l - 8, y: y(v) + 4, "text-anchor": "end" }, svg); t.textContent = fmt(v).replace(/\.0+%$/, "%");
+  }
+  el("line", { x1: m.l, x2: W - m.r, y1: y(0), y2: y(0), stroke: css("--text-muted"), "stroke-width": 1 }, svg);
+  const tip = tipFor(container);
+  const showLabels = band > 34;
+  items.forEach((it, i) => {
+    const cx = m.l + band * (i + 0.5), c = it.value >= 0 ? css("--pos") : css("--neg");
+    const p = el("path", { d: roundedBar(cx - bw / 2, cx + bw / 2, y(0), y(it.value), it.value >= 0 ? "top" : "bottom"), fill: c }, svg);
+    if (showLabels && it.label !== false) { const t = el("text", { x: cx, y: it.value >= 0 ? y(it.value) - 5 : y(it.value) + 13, "text-anchor": "middle", class: "val" }, svg);
+      t.textContent = fmt(it.value, 1); }
+    if (it.xlabel) { const t = el("text", { x: cx, y: H - 6, "text-anchor": "middle" }, svg); t.textContent = it.xlabel; }
+    const hit = el("rect", { x: cx - band / 2, y: m.t, width: band, height: ih, fill: "transparent" }, svg);
+    hit.addEventListener("pointermove", e => { p.setAttribute("opacity", 0.8); const r = container.getBoundingClientRect();
+      fillTip(tip, it.name, it.tip || [{ color: c, name: "", value: fmt(it.value) }]); placeTip(tip, container, e.clientX - r.left, e.clientY - r.top); });
+    hit.addEventListener("pointerleave", () => { p.removeAttribute("opacity"); tip.style.display = "none"; });
+  });
+}
+
+// ---------- tables
+function table(container, { columns, rows, hl, align, sortable }) {
+  container.replaceChildren();
+  const t = h("table"), thead = h("thead"), tr = h("tr"), tb = h("tbody");
+  let data = rows.slice(), dir = {};
+  columns.forEach((c, j) => { const th = h("th", c); if (align && align[j] === "l") th.className = "l";
+    if (sortable && sortable[j] != null) { th.classList.add("sortable"); th.addEventListener("click", () => {
+      dir[j] = -(dir[j] || 1); const key = sortable[j];
+      data.sort((a, b) => { const A = key(a), B = key(b); return (A > B ? 1 : A < B ? -1 : 0) * dir[j]; }); body(); }); }
+    tr.appendChild(th); });
+  thead.appendChild(tr);
+  function body() { tb.replaceChildren(); for (const r of data) { const row = h("tr"); if (hl && hl(r)) row.className = "hl";
+    r.cells.forEach((v, j) => { const td = h("td"); if (align && align[j] === "l") td.className = "l";
+      if (v instanceof Node) td.appendChild(v); else td.textContent = v == null ? "-" : v; row.appendChild(td); }); tb.appendChild(row); } }
+  body(); t.appendChild(thead); t.appendChild(tb); container.appendChild(t);
+}
+const simpleTable = (id, T, hlFn) => table($(id), { columns: T.columns, rows: T.rows.map(r => ({ cells: r.map(v => typeof v === "number" ? +v.toFixed(4) : v), raw: r })),
+  hl: hlFn, align: T.columns.map((_, j) => j === 0 ? "l" : "r") });
+
+// ---------- stats over a slice of daily returns (same formulas as metrics.perf)
+function stats(i0, i1) {
+  const r = D.daily.strat.slice(i0, i1 + 1), b = D.daily.bench.slice(i0, i1 + 1), n = r.length;
+  let nav = 1, bnav = 1, peak = 1, mdd = 0, epk = 1, emdd = 0, sa = 0, sa2 = 0;
+  for (let k = 0; k < n; k++) { nav *= 1 + r[k]; bnav *= 1 + b[k]; peak = Math.max(peak, nav); mdd = Math.min(mdd, nav / peak - 1);
+    const ex = nav / bnav; epk = Math.max(epk, ex); emdd = Math.min(emdd, ex / epk - 1); const a = r[k] - b[k]; sa += a; sa2 += a * a; }
+  const ann = Math.pow(nav, 252 / n) - 1, bann = Math.pow(bnav, 252 / n) - 1, exann = Math.pow(nav / bnav, 252 / n) - 1;
+  const te = Math.sqrt((sa2 - sa * sa / n) / (n - 1)) * Math.sqrt(252);
+  return { ann, bann, exann, te, ir: exann / te, mdd, emdd, years: n / 252 };
+}
+
+// ---------- page
+const M = D.meta, dates = D.daily.dates;
+(function meta() {
+  const items = [["生成时间", M.generated], ["数据区间", `${M.data_start} ~ ${M.data_end}`], ["选股模型", M.model],
+                 ["风险厌恶 λ", String(M.lam)], ["入选因子", M.n_factors + " 个"], ["代码版本", M.commit]];
+  for (const [k, v] of items) { const s = h("span", k + "："); s.appendChild(h("b", v)); $("meta").appendChild(s); }
+})();
+let range = "oos";
+function rangeIdx() {
+  if (range === "is") return [0, dates.findLastIndex ? dates.findLastIndex(d => d <= M.is_end) : dates.filter(d => d <= M.is_end).length - 1];
+  if (range === "oos") return [dates.findIndex(d => d >= M.oos_start), dates.length - 1];
+  return [0, dates.length - 1];
+}
+function tile(parent, k, v, s) { const t = h("div", null, "tile"); t.appendChild(h("div", k, "k")); t.appendChild(h("div", v, "v")); if (s) t.appendChild(h("div", s, "s")); parent.appendChild(t); }
+function renderRange() {
+  const [i0, i1] = rangeIdx(), st = stats(i0, i1), sl = a => a.slice(i0, i1 + 1), ds = dates.slice(i0, i1 + 1);
+  const label = { all: "全部预测区间", is: "样本内（用于选因子、选模型、调参数）", oos: "样本外（只在最后检验一次）" }[range];
+  $("rangeDesc").textContent = `${label}：${ds[0]} ~ ${ds[ds.length - 1]}，约 ${st.years.toFixed(1)} 年`;
+  const T = $("tiles"); T.replaceChildren();
+  tile(T, "超额年化收益", spct(st.exann), "组合相对基准，已扣成本");
+  tile(T, "信息比率 IR", num(st.ir), `t 值约 ${num(st.ir * Math.sqrt(st.years), 1)}（≥2 才算显著）`);
+  tile(T, "跟踪误差", pct(st.te), "超额收益的年化波动");
+  tile(T, "超额最大回撤", pct(st.emdd));
+  tile(T, "组合年化收益", pct(st.ann), `最大回撤 ${pct(st.mdd)}`);
+  tile(T, "基准年化收益", pct(st.bann));
+  const cum = a => { let v = 1; return a.map(x => (v *= 1 + (x || 0))); };
+  const s = cum(sl(D.daily.strat)), b = cum(sl(D.daily.bench)), tp = cum(sl(D.daily.top)), nc = cum(sl(D.daily.nocost));
+  const c1 = css("--series-1"), c2 = css("--series-2"), cb = css("--series-bench");
+  const navSeries = [{ name: M.main, color: c1, values: s }, { name: M.top + "（对照）", color: c2, values: tp }, { name: "基准（复原中证800）", color: cb, values: b }];
+  legend("navLegend", navSeries);
+  $("navSub").textContent = `区间末：组合 ${s[s.length - 1].toFixed(3)}，对照组 ${tp[tp.length - 1].toFixed(3)}，基准 ${b[b.length - 1].toFixed(3)}`;
+  const shade = range === "all" ? M.oos_start : null;
+  lineChart($("navChart"), { dates: ds, series: navSeries, shadeFrom: shade, baseline: 1 });
+  const ex = s.map((v, k) => v / b[k]), exn = nc.map((v, k) => v / b[k]);
+  const exSeries = [{ name: "含成本", color: c1, values: ex }, { name: "不含成本", color: c1, values: exn, dash: true }];
+  legend("exLegend", exSeries);
+  const yrs = st.years, drag = Math.pow(exn[exn.length - 1], 1 / yrs) - Math.pow(ex[ex.length - 1], 1 / yrs);
+  $("exSub").textContent = `虚线是不扣成本的假设情形；本区间交易成本让超额每年少了约 ${(drag * 100).toFixed(2)} 个百分点`;
+  lineChart($("exChart"), { dates: ds, series: exSeries, shadeFrom: shade, baseline: 1, height: 240 });
+  let pk = 1; const dd = ex.map(v => (pk = Math.max(pk, v), v / pk - 1));
+  lineChart($("ddChart"), { dates: ds, series: [{ name: "超额回撤", color: css("--neg"), values: dd }], yfmt: v => pct(v, 0), tipFmt: v => pct(v), shadeFrom: shade, baseline: 0, area: true, height: 240 });
+}
+document.querySelectorAll("#range button").forEach(btn => btn.addEventListener("click", () => {
+  range = btn.dataset.r; document.querySelectorAll("#range button").forEach(b => b.setAttribute("aria-pressed", b === btn)); renderRange(); }));
+
+function renderStatic() {
+  // yearly
+  columns($("yearChart"), { items: D.yearly.map(y => ({ name: y.year + " 年", xlabel: String(y.year), value: y.excess,
+    tip: [{ name: "超额", value: spct(y.excess) }, { name: "组合", value: spct(y.strat) }, { name: "基准", value: spct(y.bench) }] })) });
+  table($("yearTable"), { columns: ["年份", "组合", "基准", "超额"], rows: D.yearly.map(y => ({ cells: [y.year, spct(y.strat), spct(y.bench), spct(y.excess)] })) });
+  // IC
+  const icd = D.ic.dates, icv = D.ic.values, oosIc = icv.filter((_, i) => icd[i] >= M.oos_start), isIc = icv.filter((_, i) => icd[i] < M.oos_start);
+  const mean = a => a.reduce((s, v) => s + v, 0) / a.length, sd = a => { const m = mean(a); return Math.sqrt(a.reduce((s, v) => s + (v - m) ** 2, 0) / (a.length - 1)); };
+  const T = $("icTiles"); T.replaceChildren();
+  tile(T, "样本内 平均 RankIC", num(mean(isIc), 3), `ICIR(年化) ${num(mean(isIc) / sd(isIc) * Math.sqrt(12))}`);
+  tile(T, "样本外 平均 RankIC", num(mean(oosIc), 3), `ICIR(年化) ${num(mean(oosIc) / sd(oosIc) * Math.sqrt(12))}`);
+  tile(T, "样本外 IC>0 的月份", pct(oosIc.filter(v => v > 0).length / oosIc.length, 0), `${oosIc.length} 个月`);
+  $("icSub").textContent = `模型：${M.model}，共 ${icv.length} 个月`;
+  columns($("icChart"), { items: icv.map((v, i) => ({ name: icd[i], value: v, label: false,
+    xlabel: (i === 0 || icd[i].slice(0, 4) !== icd[i - 1].slice(0, 4)) && i < icv.length - 6 ? icd[i].slice(0, 4) : null, tip: [{ name: "RankIC", value: num(v, 3) }] })), fmt: v => num(v, 2), height: 240 });
+  let c = 0; const cumic = icv.map(v => (c += v));
+  lineChart($("cumIcChart"), { dates: icd, series: [{ name: "累计 RankIC", color: css("--series-1"), values: cumic }], shadeFrom: M.oos_start, height: 240, baseline: 0 });
+  simpleTable("modelTable", D.model_eval, r => r.raw[0] === M.model);
+  // factors
+  const fs = D.factors.slice().sort((a, b) => b.t - a.t);
+  hBars($("factorChart"), { items: fs.map(f => ({ name: f.short, value: f.t, sel: f.selected,
+      tip: [{ name: f.code + " · " + f.cat, value: "t = " + num(f.t) }, { name: "年化 ICIR", value: num(f.icir) }, { name: "", value: f.why }, { name: f.name, value: "" }] })),
+    fmt: v => num(v, 2), color: it => it.sel ? css("--series-1") : css("--neutral"), thresholds: [-2, 2] });
+  const out = D.factors.filter(f => !f.selected && f.why.includes("相关性"));
+  $("factorNote").textContent = out.length ? "t 值过线却没入选的因子，是因为和已入选因子太像（相关性高于 0.6）：" +
+    out.map(f => `${f.short}（${f.why}）`).join("；") + "。另外 |ICIR| 也需不低于 0.5。" : "";
+  // latest portfolio
+  const L = D.latest, hs = L.holdings;
+  $("latestLead").textContent = `信号日 ${L.date} 收盘后生成，下一交易日按成交均价调仓，持有到下一个月末。可打分股票 ${L.n_ranked} 只 → 持有 ${hs.length} 只。` +
+    "排名靠前的股票通常被买到上限（基准权重 + 3%），这是赚超额的仓位；基准权重大但排名一般的股票也可能被持有，用来把行业和市值暴露拉回基准附近。";
+  const LT = $("latestTiles"); LT.replaceChildren();
+  const sw = hs.slice().sort((a, b) => b.w - a.w);
+  tile(LT, "持仓股票数", String(hs.length), `新买入 ${hs.filter(x => x.new).length} 只，清仓 ${L.sold.length} 只`);
+  tile(LT, "前 10 大持仓合计", pct(sw.slice(0, 10).reduce((s, x) => s + x.w, 0), 1));
+  tile(LT, "本期单边换手", pct(L.turnover, 1), "上限 40%");
+  tile(LT, "事前跟踪误差", pct(L.te, 1), L.relax > 1 ? `约束放宽 ${L.relax} 倍` : "约束未放宽");
+  tile(LT, "排名前 100 的持仓", hs.filter(x => x.rank <= 100).length + " 只", `排名中位数 ${hs.map(x => x.rank).sort((a, b) => a - b)[Math.floor(hs.length / 2)]}`);
+  const indS = L.industry.slice().sort((a, b) => b.value - a.value), indC = indS.length > 16 ? [...indS.slice(0, 8), ...indS.slice(-8)] : indS;
+  hBars($("indChart"), { items: indC.map(i => ({ name: i.name.replace(/^[A-Z]\d+/, ""), value: i.value,
+    tip: [{ name: i.name, value: spct(i.value) }] })) });
+  table($("benchTopTable"), { columns: ["代码", "名称", "基准权重", "组合权重"], align: ["l", "l", "r", "r"],
+    rows: L.bench_top.map(x => ({ cells: [x.code, x.name, pct(x.b), pct(x.w)] })) });
+  const tag = t => h("span", t, "tag");
+  table($("holdTable"), { columns: ["代码", "名称", "行业", "权重", "基准权重", "主动权重", "较上月", "模型排名"],
+    align: ["l", "l", "l", "r", "r", "r", "r", "r"],
+    sortable: [r => r.x.code, r => r.x.name, r => r.x.industry, r => r.x.w, r => r.x.b, r => r.x.a, r => r.x.new ? 9 : r.x.chg, r => r.x.rank],
+    rows: sw.map(x => ({ x, cells: [x.code, x.name, x.industry.replace(/^[A-Z]\d+/, ""), pct(x.w), pct(x.b), spct(x.a), x.new ? tag("新买入") : spct(x.chg), `${x.rank} / ${L.n_ranked}`] })) });
+  $("soldList").textContent = "本期清仓：" + (L.sold.map(s => `${s.name}（${s.code}）`).join("、") || "无");
+  // attribution
+  const BR = D.brinson, rowsB = Object.keys(BR).map(p => ({ cells: [p, spct(BR[p].allocation), spct(BR[p].selection), spct(BR[p].interaction), spct(BR[p]["合计"])] }));
+  table($("brinsonTable"), { columns: ["区间", "行业配置", "行业内选股", "交互项", "合计"], rows: rowsB });
+  const fk = Object.keys(D.factor_attr);
+  hBars($("faIS"), { items: D.factor_attr[fk[0]] }); hBars($("faOOS"), { items: D.factor_attr[fk[1]] });
+  hBars($("oosIndChart"), { items: D.oos_industry.slice().sort((a, b) => b.value - a.value).map(i => ({ name: i.name.replace(/^[A-Z]\d+/, ""), value: i.value,
+    tip: [{ name: i.name, value: spct(i.value) }] })) });
+  // optimiser
+  const md = D.monthly.dates, c1 = css("--series-1");
+  lineChart($("teChart"), { dates: md, series: [{ name: "事前跟踪误差", color: c1, values: D.monthly.te }], yfmt: v => pct(v, 0), tipFmt: v => pct(v, 1), height: 180, shadeFrom: M.oos_start });
+  lineChart($("nChart"), { dates: md, series: [{ name: "持仓数", color: c1, values: D.monthly.n }], yfmt: v => String(Math.round(v)), height: 180, shadeFrom: M.oos_start });
+  lineChart($("toChart"), { dates: md, series: [{ name: "单边换手", color: c1, values: D.monthly.turnover }], yfmt: v => pct(v, 0), tipFmt: v => pct(v, 1), height: 180, shadeFrom: M.oos_start });
+  // tables
+  const pk = Object.keys(D.perf);
+  simpleTable("perfIS", D.perf[pk[0]], r => r.raw[0] === M.main); simpleTable("perfOOS", D.perf[pk[1]], r => r.raw[0] === M.main);
+  simpleTable("calibTable", D.calib, r => Number(r.raw[0]) === M.lam);
+  const P = M.portfolio, C = M.costs, kv = [["单只股票上限", `基准权重 + ${pct(P.max_active_weight, 0)}`], ["行业偏离上限", `±${pct(P.industry_dev, 0)}`],
+    ["市值暴露上限", `±${P.size_dev} 个标准差`], ["单边换手上限", pct(P.turnover_limit, 0) + " / 次"], ["佣金", pct(C.commission, 3) + " / 边"],
+    ["滑点", pct(C.slippage, 2) + " / 边"], ["印花税", `${pct(C.stamp_before_2023_08_28, 2)} → ${pct(C.stamp_after_2023_08_28, 2)}（2023-08-28 起，仅卖出）`],
+    ["训练起点", "预测从 " + M.first_pred + " 开始"], ["样本外", `${M.oos_start} ~ ${M.oos_end}`]];
+  $("params").replaceChildren(...kv.map(([k, v]) => { const d = h("div", k + "："); d.appendChild(h("b", v)); return d; }));
+}
+function renderAll() { renderRange(); renderStatic(); }
+renderAll();
+let rt; window.addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(renderAll, 150); });
+if (window.matchMedia) window.matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", renderAll);
+</script>
+</body>
+</html>

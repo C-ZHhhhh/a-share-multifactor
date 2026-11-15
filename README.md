@@ -13,6 +13,8 @@
 5. 含 A 股交易限制的日频回测
 6. 样本外验证，以及 Brinson 和因子归因
 
+每次运行都会自动生成一份**交互式可视化报告** [reports/report.html](reports/report.html)，用浏览器直接打开即可，不需要联网（[在线预览](https://raw.githack.com/C-ZHhhhh/a-share-multifactor/main/reports/report.html)）。报告包含净值、超额收益、分年度表现、选股信号、因子筛选、最新持仓、归因和优化器诊断，并可以在全部、样本内、样本外之间切换。
+
 每个月都会产出一份**具体的股票持仓清单**（平均 44 只），回测收益就是按这些持仓逐日计算的。最新一期见 [reports/holdings/latest_portfolio.md](reports/holdings/latest_portfolio.md)。
 
 ![nav](reports/figures/nav.png)
@@ -60,10 +62,12 @@ src/mf/
   optimizer.py              cvxpy 均值-方差主动优化
   backtest.py               日频回测引擎
   holdings.py               导出每月持仓清单与最新组合报告
+  html_report.py            生成交互式可视化报告（模板 report_template.html，纯 JS 画图，离线可用）
   metrics.py, attribution.py  绩效指标、Brinson 与因子归因
 scripts/01 … 06             六个流程步骤
-tests/test_core.py          9 个单元测试（前视、时点、成本、涨跌停、优化器）
+tests/                      11 个单元测试（前视、时点、成本、涨跌停、优化器、报告）
 reports/                    研究报告、审计、因子检验、回测结果、图表
+reports/report.html         每次运行自动生成的交互式可视化报告
 reports/holdings/           每月持仓 CSV + 最新一期组合 (latest_portfolio.md)
 docs/                       学习指南、面试手册、简历表述
 ```
@@ -85,19 +89,21 @@ bash run_all.sh
 
 | 步骤 | 命令 | 做什么 | 首次耗时 |
 |---|---|---|---|
-| 0 | `pytest tests` | 9 个单元测试（前视、时点财报、成本、涨跌停、优化器） | 几秒 |
+| 0 | `pytest tests` | 11 个单元测试（前视、时点财报、成本、涨跌停、优化器、报告） | 几秒 |
 | 1 | `scripts/01_fetch_data.py` | 下载数据到 `data/raw/`（限速、失败重试、断点续传） | 约 45 分钟 |
 | 2 | `scripts/02_build_panel_audit.py` | 日频面板 + 数据质量审计 → `reports/data_audit.md` | 约 1 分钟 |
 | 3 | `scripts/03_factors.py` | 19 个因子、单因子检验、样本内筛选 → `reports/factor_tests.md` | 约 1 分钟 |
 | 4 | `scripts/04_models.py` | Walk-forward 训练 ICIR 加权 / Ridge / GBDT | 约 1 分钟 |
 | 5 | `scripts/05_portfolio_backtest.py` | 风险模型、λ 校准、组合优化、日频回测 | 约 1 分钟 |
-| 6 | `scripts/06_attribution_report.py` | 样本内外评估、归因、图表、**持仓导出** → `reports/results.md`、`reports/holdings/` | 几十秒 |
+| 6 | `scripts/06_attribution_report.py` | 样本内外评估、归因、图表、**持仓导出**、**可视化报告** → `reports/report.html`、`reports/results.md`、`reports/holdings/` | 约 1 分钟 |
 
 下载的数据缓存在 `data/` 中（不进 git），第二次运行约 4 分钟。下载中断后重新运行即可从断点继续。
 
 ### 产出
 | 文件 | 内容 |
 |---|---|
+| **`reports/report.html`** | **本次运行的交互式可视化报告**（单个文件、离线可用，悬停看数值，可切换样本内/外） |
+| `reports/runs/report_<时间>.html` | 每次运行留一份带时间戳的副本，方便对比不同参数或不同下载日期的结果（不进 git） |
 | `reports/results.md` | 绩效表（样本内/外）、分年度、λ 校准、Brinson 与因子归因 |
 | `reports/holdings/latest_portfolio.md` | 最新一期全部持仓、调仓、行业主动权重 |
 | `reports/holdings/optimized_monthly.csv` | 组合优化的每月持仓（可用 Excel 打开） |
@@ -129,6 +135,7 @@ rm -rf data && bash run_all.sh
 
 ## 报告
 
+- [可视化报告](reports/report.html)（下载后用浏览器打开，或[在线预览](https://raw.githack.com/C-ZHhhhh/a-share-multifactor/main/reports/report.html)）
 - [研究报告](reports/research_report.md)：方法、结果、归因、局限，以及研究中发现并修正的 6 个问题
 - [最新一期持仓](reports/holdings/latest_portfolio.md) · [每月持仓 CSV](reports/holdings/)
 - [数据审计](reports/data_audit.md) · [单因子检验](reports/factor_tests.md) · [回测结果明细](reports/results.md)
