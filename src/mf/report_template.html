@@ -220,7 +220,7 @@ footer { margin-top: 40px; color: var(--text-muted); font-size: 12.5px; }
     <p class="lead">与 <code>reports/results.md</code> 中的表格完全一致。高亮行是正式组合。夏普比率 = (日收益均值 − 无风险利率/252) × 252 ÷ 年化波动；信息比率 = 日主动收益均值 × 252 ÷ 跟踪误差；年化收益和超额是几何口径。</p>
     <div class="card"><h3>样本内</h3><div class="tbl-wrap" id="perfIS"></div></div>
     <div class="card"><h3>样本外</h3><div class="tbl-wrap" id="perfOOS"></div></div>
-    <div class="card"><h3>风险厌恶系数 λ 校准（仅样本内）</h3><p class="sub">λ 越大越怕偏离基准；按样本内信息比率选定。注意：如果三个 λ 在样本内的 IR 都是负数，"IR 最高"选中的就是最贴近基准的那个，这个选择本身信息量很低，见第 8 节的参数敏感性</p><div class="tbl-wrap" id="calibTable"></div></div>
+    <div class="card"><h3>风险厌恶系数 λ 校准（仅样本内）</h3><p class="sub">按风险预算选 λ：选样本内平均事前跟踪误差最接近目标的网格值，IR 和超额只作参考、不参与选择。λ 越大越怕偏离基准</p><div class="tbl-wrap" id="calibTable"></div></div>
     <div class="card"><h3>本次运行的参数</h3><div class="kv" id="params"></div></div>
   </section>
 

@@ -29,7 +29,10 @@ model:
   label_horizon: 1             # predict next-month return
 
 portfolio:
-  risk_aversion: 10.0
+  risk_aversion: 10.0         # placeholder: step 5 calibrates lambda in-sample (see target_te)
+  target_te: 0.04             # lambda rule: the grid value whose mean in-sample EX-ANTE tracking error is closest
+                              # to this target (a risk budget; no returns are used to pick lambda)
+  lambda_grid: [1, 2, 3, 5, 7, 10, 20, 50]
   max_active_weight: 0.03     # w_i <= b_i + 3% (active, not absolute, cap)
   industry_dev: 0.05           # |w_ind - b_ind| <= 5%
   size_dev: 0.2                # |active size exposure| <= 0.2 std

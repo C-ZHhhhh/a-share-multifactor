@@ -13,7 +13,7 @@ from mf.config import CFG, PROC
 from mf.dataset import load_dataset
 from mf.metrics import perf
 from mf.panel import load_benchmarks, load_long
-from mf.portfolio import optimised_backtest, topn_targets
+from mf.portfolio import calibrate_lambda, optimised_backtest, topn_targets
 from mf.risk import estimate_factor_returns
 
 
@@ -39,18 +39,10 @@ if __name__ == "__main__":
     bench = B.rec          # strategy benchmark = the float-cap weights the optimiser tracks
     S = CFG["split"]
 
-    # ---- risk-aversion calibration on IS only (target ex-ante TE 4-6%)
+    # ---- risk-aversion calibration on IS only: lambda whose mean ex-ante TE is closest to the target
     is_score = scores[best][scores.index.get_level_values(0) <= S["is_end"]]
-    calib = {}
-    for lam in (2.0, 10.0, 50.0):
-        pc = {**CFG["portfolio"], "risk_aversion": lam}
-        bt, inf = optimised_backtest(is_score, data, fret, resid, mkt, pc, f"calib λ={lam}", end=S["is_end"])
-        p = perf(bt["ret"], bench, bt["turnover"], bt["cost"])
-        calib[lam] = {"ex_ante_te": inf.ex_ante_te.mean(), "IR": p["信息比率"], "超额年化": p["超额年化"],
-                      "跟踪误差": p["跟踪误差"], "持仓数": inf.n_holdings.mean()}
-    calib = pd.DataFrame(calib).T
-    print(calib.round(3))
-    lam_best = float(calib["IR"].idxmax())
+    lam_best, calib = calibrate_lambda(is_score, data, fret, resid, mkt, bench, CFG["portfolio"], S["is_end"])
+    print(calib.round(3)); print(f"λ = {lam_best:g} (target ex-ante TE {CFG['portfolio']['target_te']:.1%})")
     pcfg = {**CFG["portfolio"], "risk_aversion": lam_best}
 
     # ---- final portfolios over the whole walk-forward window

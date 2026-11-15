@@ -79,7 +79,7 @@ def task(spec: dict) -> dict:
         return pickle.load(open(f, "rb"))
     if not _W:
         _init()
-    from mf.portfolio import optimised_backtest
+    from mf.portfolio import calibrate_lambda, optimised_backtest
     data, fret, resid, mkt = _W["data"], _W["fret"], _W["resid"], _W["mkt"]
     S, base = CFG["split"], spec["base"]
     bench = load_benchmarks().rec
@@ -126,12 +126,8 @@ def task(spec: dict) -> dict:
             icir[m] = ic_stats(ic_series(dd[label_window(dd, first_pred, is_end)], "pred"))["ICIR(年化)"]
         best = max(icir, key=icir.get)
         score = scores[best][scores[best].index.get_level_values(0) >= first_pred]
-        calib = {}
-        for lam in (2.0, 10.0, 50.0):
-            bt, _ = optimised_backtest(score, data, fret, resid, mkt, {**pcfg, "risk_aversion": lam},
-                                       f"{spec['name']} λ={lam}", end=is_end, progress=False)
-            calib[lam] = perf(bt["ret"], bench)["信息比率"]
-        lam = max(calib, key=calib.get)
+        lam, _ = calibrate_lambda(score, data, fret, resid, mkt, bench, pcfg, is_end, label=spec["name"],
+                                  progress=False)
         bt, info = optimised_backtest(score, data, fret, resid, mkt, {**pcfg, "risk_aversion": lam},
                                       spec["name"], progress=False)
         res = _summ(bt, info, bench, oos_start, S["oos_end"], first_pred, is_end, score, data)
@@ -197,11 +193,18 @@ if __name__ == "__main__":
     oos = (S["oos_start"], S["oos_end"])
     first_pred = pd.Timestamp(choice["first_pred"])
 
-    other_lams = [l for l in (2.0, 10.0, 50.0) if l != lam]
+    calib = bt_main["calib"]
+    pick = lambda te: float((calib.ex_ante_te - te).abs().idxmin())
+    target = CFG["portfolio"]["target_te"]
+    lam_alts = {}                                       # alternative lambda rules -> lambda (deduplicated)
+    for te in (0.03, 0.05):
+        lam_alts.setdefault(pick(te), f"目标事前跟踪误差 {te:.0%} → λ = {pick(te):g}")
+    lam_alts.setdefault(float(calib["IR"].idxmax()), f"按样本内 IR 最高选 λ (v2 规则) → λ = {calib['IR'].idxmax():g}")
+    lam_alts.pop(lam, None)
     other_models = [m for m in ("ICIR加权", "Ridge", "GBDT") if m != best]
     specs = [
-        *[{"name": f"lam_{l:g}", "group": "参数", "label": f"λ = {l:g} (样本内选定 λ = {lam:g})", "kind": "constraint",
-           "pcfg": {"risk_aversion": l}} for l in other_lams],
+        *[{"name": f"lam_{l:g}", "group": "参数", "label": f"{lab} (主方案目标 {target:.0%}, λ = {lam:g})",
+           "kind": "constraint", "pcfg": {"risk_aversion": l}} for l, lab in lam_alts.items()],
         *[{"name": f"model_{m}", "group": "参数", "label": f"模型换成 {m} (样本内选定 {best})", "kind": "constraint",
            "model": m} for m in other_models],
         {"name": "con_beta_vol", "group": "约束", "label": "Beta 与波动率暴露 ≤ 0.2σ", "kind": "constraint",
@@ -316,9 +319,9 @@ if __name__ == "__main__":
         "# 稳健性、数据敏感性与容量检验 (自动生成)", "",
         f"主方案: {main}, λ={lam}; 主基准为自定义流通市值基准 (见 results.md)。除'切分'组外, 样本外均为 {oos[0]} ~ {oos[1]}。", "",
         "## 1. 方案对比 (样本外)", "",
-        "- **参数**: 换成样本内没有选中的 λ 或模型。样本内的选择往往由很小的差距决定, 这一组看样本外结论是否依赖这些选择。",
+        "- **参数**: λ 换成其他跟踪误差目标 (3%、5%) 或 v2 的'样本内 IR 最高'规则; 模型换成样本内没有选中的两个。",
         "- **约束**: 在原约束上增加风格暴露限制或收紧行业偏离, λ 与模型不变。",
-        "- **切分**: 换一个样本内终点, 重新做因子筛选、模型选择和 λ 校准, 再看新的样本外。",
+        "- **切分**: 换一个样本内终点, 重新做因子筛选、模型选择和 λ 校准 (同样按目标跟踪误差), 再看新的样本外。",
         "- **数据**: 财报因子更晚可得、完全去掉、或随机丢失 10%, 重新训练模型后回测, 检验结论是否依赖财报数据质量。", "",
         vshow.to_markdown(index=False), "",
         "## 2. 交易成本情景 (样本外超额年化, 同一组交易)", "",
