@@ -7,6 +7,7 @@ data:
   processed_dir: data/processed
   n_workers: 2                 # parallel baostock sessions
 
+risk_free: 0.015               # annual risk-free rate for the Sharpe ratio (1-year deposit benchmark rate, 2015-2024)
 benchmark: sh.000906           # CSI 800 price index: trading calendar & market factor
 benchmark_tr: H00906           # CSI 800 total-return index: performance benchmark (portfolio returns include dividends)
 indices: [sh.000300, sh.000905, sh.000906]

@@ -7,6 +7,11 @@ Timeline for a rebalance signal generated at the close of day t:
                    commission + slippage both sides, stamp duty on sells
   t+1 VWAP..close: new portfolio earns VWAP(t+1) -> close(t+1)
   afterwards     : weights drift with daily total returns
+
+Targets can be a fixed dict {signal_date: weights} or a callable target_fn(signal_date, w_actual) that is
+called at the close of each signal date with the portfolio's ACTUAL drifted weights (after blocked trades),
+so a path-dependent optimiser (turnover limit, no-buy constraint) sees the real current holdings.
+The portfolio is always fully invested: costs are paid out of NAV and weights always sum to 1 (cash = 0).
 """
 from __future__ import annotations
 
@@ -48,13 +53,15 @@ def stamp_rate(d: pd.Timestamp) -> float:
     return c["stamp_before_2023_08_28"] if d < pd.Timestamp("2023-08-28") else c["stamp_after_2023_08_28"]
 
 
-def run_backtest(targets: dict[pd.Timestamp, pd.Series], mkt: Market, start=None, end=None,
-                 cost_on: bool = True) -> dict:
+def run_backtest(targets, mkt: Market, start=None, end=None, cost_on: bool = True,
+                 signal_dates=None, cost_mult: float = 1.0) -> dict:
     c = CFG["costs"]
     dates = mkt.ret.index
     codes = mkt.ret.columns
     col = {k: i for i, k in enumerate(codes)}
-    sig_dates = sorted(targets)
+    target_fn = targets if callable(targets) else None
+    sig_dates = sorted(signal_dates if target_fn else targets)
+    targets = {} if target_fn else dict(targets)
     exec_map = {}
     for s in sig_dates:
         j = dates.searchsorted(s, side="right")
@@ -69,10 +76,16 @@ def run_backtest(targets: dict[pd.Timestamp, pd.Series], mkt: Market, start=None
     pos_of = {d: i for i, d in enumerate(dates)}
 
     w = np.zeros(len(codes))
-    nav, navs, turn_log, cost_log, hold_log = 1.0, [], {}, {}, {}
+    nav, navs, turn_log, cost_log, hold_log, trade_log, pre_log = 1.0, [], {}, {}, {}, {}, {}
+    cur = lambda: pd.Series(w[w > 0], index=codes[w > 0])
+    sig_set = set(sig_dates)
+    if target_fn:                        # signals decided before the first simulated day: start from cash
+        for s_ in sig_dates:
+            if s_ < start:
+                targets[s_] = target_fn(s_, cur())
     for d in days:
         i = pos_of[d]
-        if d in exec_map:
+        if d in exec_map and exec_map[d] in targets:
             r1 = R1[i]
             g1 = 1 + w @ r1
             w = w * (1 + r1) / g1 if g1 > 0 else w
@@ -89,9 +102,12 @@ def run_backtest(targets: dict[pd.Timestamp, pd.Series], mkt: Market, start=None
             buy = np.clip(new - w, 0, None).sum()
             sell = np.clip(w - new, 0, None).sum()
             cost = (buy * (c["commission"] + c["slippage"]) +
-                    sell * (c["commission"] + c["slippage"] + stamp_rate(d))) if cost_on else 0.0
+                    sell * (c["commission"] + c["slippage"] + stamp_rate(d))) * cost_mult if cost_on else 0.0
             nav *= (1 - cost)
             turn_log[d], cost_log[d] = 0.5 * (buy + sell), cost
+            dw = new - w
+            trade_log[d] = pd.Series(dw[dw != 0] * nav, index=codes[dw != 0])   # traded value / initial capital
+            pre_log[d] = cur()
             w = new
             hold_log[d] = pd.Series(w[w > 0], index=codes[w > 0])
             r2 = R2[i]
@@ -104,6 +120,9 @@ def run_backtest(targets: dict[pd.Timestamp, pd.Series], mkt: Market, start=None
             w = w * (1 + r) / g if g > 0 else w
             nav *= g
         navs.append(nav)
+        if target_fn and d in sig_set:   # close of a signal date: decide next targets from actual weights
+            targets[d] = target_fn(d, cur())
     nav_s = pd.Series(navs, index=days, name="nav")
     return {"nav": nav_s, "ret": nav_s.pct_change().fillna(nav_s.iloc[0] - 1),
-            "turnover": pd.Series(turn_log), "cost": pd.Series(cost_log), "holdings": hold_log}
+            "turnover": pd.Series(turn_log), "cost": pd.Series(cost_log), "holdings": hold_log,
+            "trades": trade_log, "pre_trade": pre_log, "targets": targets}

@@ -1,9 +1,10 @@
 """Stock-selection models, all trained walk-forward (expanding window).
 
 Look-ahead control: the label of rebalance date t (return from t+1 VWAP to the
-next rebalance's t+1 VWAP) is only fully realised one trading day *after* the
-next rebalance. So at rebalance month m we may only train on labels from months
-<= m-2 (a one-month gap).
+next rebalance's t+1 VWAP) is only fully realised on `label_date`, one trading day
+*after* the next rebalance. At rebalance date m a model may only use rows whose
+label_date < m, which in practice means labels from months <= m-2 (a one-month gap).
+The same label-availability rule is used for every in-sample decision (see dataset.label_window).
 
 Models
 ------
@@ -31,10 +32,11 @@ def _months(data: pd.DataFrame) -> list[pd.Timestamp]:
 
 def predict_icir(data: pd.DataFrame, factors: list[str], signs: dict[str, int], window: int = 24) -> pd.Series:
     ics = pd.DataFrame({f: ic_series(data, f"z_{f}") * signs[f] for f in factors})
+    known = data.groupby("date").label_date.first()           # when each month's IC becomes known
     months = _months(data)
     out = []
     for i, d in enumerate(months):
-        hist = ics.loc[ics.index < months[max(i - GAP, 0)]].tail(window) if i > GAP else ics.iloc[:0]
+        hist = ics.loc[ics.index.isin(known[known < d].index)].tail(window)
         if len(hist) < 12:
             w = pd.Series(1.0, index=factors)          # warm-up: equal weights
         else:
@@ -55,7 +57,7 @@ def _walk_forward(data: pd.DataFrame, cols: list[str], make_model, refit_every: 
         if i < min_train + GAP:
             continue
         if model is None or (i - min_train - GAP) % refit_every == 0:
-            train = d[(d.date <= months[i - 1 - GAP]) & d.fwd_rank.notna()]
+            train = d[(d.label_date < m) & d.fwd_rank.notna()]   # labels already realised at m
             model = make_model().fit(train[cols].values, train.fwd_rank.values)
         g = d[d.date == m]
         pred = model.predict(g[cols].values)

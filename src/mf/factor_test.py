@@ -47,7 +47,8 @@ def ic_decay(data: pd.DataFrame, col: str, lags: int = 6) -> list[float]:
 
 
 def run_factor_tests(data: pd.DataFrame, period: tuple[str, str]) -> tuple[pd.DataFrame, dict]:
-    sub = data[(data.date >= period[0]) & (data.date <= period[1])]
+    from .dataset import label_window
+    sub = data[label_window(data, *period)]
     rows, extra = [], {"ic": {}, "quant": {}}
     for f in FACTOR_INFO:
         col = f"z_{f}"
@@ -72,7 +73,8 @@ def select_factors(tab: pd.DataFrame, data: pd.DataFrame, t_min: float = 2.0, ic
     """Greedy selection by |ICIR|, dropping factors too correlated with an already-selected one."""
     cand = tab[(tab["t值"].abs() >= t_min) & (tab["ICIR(年化)"].abs() >= icir_min)]
     cand = cand.reindex(cand["ICIR(年化)"].abs().sort_values(ascending=False).index)
-    corr = factor_corr(data[(data.date >= CFG["split"]["is_start"]) & (data.date <= CFG["split"]["is_end"])])
+    from .dataset import label_window
+    corr = factor_corr(data[label_window(data, CFG["split"]["is_start"], CFG["split"]["is_end"])])
     chosen = []
     for f in cand.index:
         if all(abs(corr.loc[f, g]) < corr_max for g in chosen):

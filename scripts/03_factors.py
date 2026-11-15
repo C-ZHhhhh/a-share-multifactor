@@ -6,7 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from mf.config import CFG, PROC, REPORTS
-from mf.dataset import build_dataset
+from mf.dataset import build_dataset, label_window
 from mf.factor_test import (ic_decay, plot_factor_tests, plot_ic_decay, run_factor_tests,
                             select_factors)
 from mf.factors import FACTOR_INFO
@@ -20,7 +20,7 @@ if __name__ == "__main__":
     is_tab, is_extra = run_factor_tests(data, (S["is_start"], S["is_end"]))
     chosen, signs, corr = select_factors(is_tab, data)
     plot_factor_tests(is_tab, is_extra, corr, "is")
-    is_data = data[(data.date >= S["is_start"]) & (data.date <= S["is_end"])]
+    is_data = data[label_window(data, S["is_start"], S["is_end"])]
     decay = {f: ic_decay(is_data, f"z_{f}") for f in chosen}
     plot_ic_decay(decay, "is")
     # OOS single-factor results: computed for the report only, never used for selection
@@ -36,7 +36,10 @@ if __name__ == "__main__":
     fmt = lambda t: t[show].round(3).to_markdown()
     md = ["# 单因子检验 (Single-Factor Tests)", "",
           "预处理: 行业中位数填充 → MAD(5倍) 去极值 → Z-score → 对证监会行业哑变量 + ln流通市值 回归取残差 (市值因子仅行业中性) → Z-score。",
-          "检验: 月末截面 RankIC (Spearman), 标签为 T+1 日 VWAP 买入、持有至下月末 T+1 VWAP 的收益; 五分组等权月度收益。", "",
+          "检验: 月末截面 RankIC (Spearman), 标签为 T+1 日 VWAP 买入、持有至下月末 T+1 VWAP 的收益; 五分组等权月度收益。",
+          f"时间口径: 一个信号日只有在其标签**完全实现** (下一次调仓的成交日) 不晚于区间终点时才计入该区间。"
+          f"样本内最后一个可用信号日是 {is_data.date.max().date()} (标签实现于 {is_data.label_date.max().date()}); "
+          f"之后的信号日标签在 {S['is_end']} 之后才实现, 不进入样本内的任何决策。", "",
           "## 因子定义", "", "| 因子 | 类别 | 定义 |", "|---|---|---|",
           *[f"| {k} | {v[0]} | {v[1]} |" for k, v in FACTOR_INFO.items()], "",
           f"## 样本内 {S['is_start']} ~ {S['is_end']}", "", fmt(is_tab), "",

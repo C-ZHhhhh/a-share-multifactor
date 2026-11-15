@@ -27,6 +27,8 @@ def build_dataset(long: pd.DataFrame) -> pd.DataFrame:
     entry = adj_vwap.reindex(exec_dates)                       # NaN if suspended -> can't enter
     exit_ = adj_vwap.reindex(exec_dates).fillna(adj_px_ff.reindex(exec_dates))
     fwd = pd.DataFrame(exit_.shift(-1).values / entry.values - 1, index=rdates, columns=entry.columns)
+    # the label of rebalance d is only known after the NEXT rebalance's execution (its VWAP fill)
+    label_dates = dict(zip(rdates, exec_dates[1:] + [pd.NaT]))
 
     uni["month"] = uni.month.astype(str)
     members = uni.groupby("month").code.apply(set)
@@ -40,6 +42,7 @@ def build_dataset(long: pd.DataFrame) -> pd.DataFrame:
         df = pd.DataFrame({f: daily_f[f].loc[d].reindex(codes) for f in FACTORS})
         df["date"] = d
         df["exec_date"] = ex
+        df["label_date"] = label_dates[d]
         df["industry"] = industry.reindex(codes).fillna("未分类").values
         df["mcap"] = W["float_mcap"].loc[d].reindex(codes)
         df["size_raw"] = df["size"]
@@ -71,3 +74,10 @@ def build_dataset(long: pd.DataFrame) -> pd.DataFrame:
 
 def load_dataset() -> pd.DataFrame:
     return pd.read_parquet(PROC / "dataset.parquet")
+
+
+def label_window(data: pd.DataFrame, start, end) -> pd.Series:
+    """Rows usable for research on [start, end]: signal date >= start AND the label is fully realised
+    (label_date) by `end`. Every in-sample decision (factor screen, model choice, parameter choice) uses
+    this mask, so no label that is realised after the in-sample end leaks into it."""
+    return (data.date >= pd.Timestamp(start)) & (data.label_date <= pd.Timestamp(end))

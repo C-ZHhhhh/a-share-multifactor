@@ -63,10 +63,32 @@ def test_backtest_blocks_limit_up_buys():
     assert "a" not in h.index and h["b"] == pytest.approx(1.0)
 
 
+def test_optimiser_callback_sees_actual_drifted_weights():
+    # 'a' rises 10%/day, 'b' flat: after the first rebalance to 50/50 the actual weights drift towards 'a'
+    idx = pd.bdate_range("2021-01-01", periods=4)
+    R = pd.DataFrame({"a": 0.10, "b": 0.0}, index=idx)
+    zero = R * 0
+    mkt = Market(R, zero, zero, ~zero.astype(bool) | True, zero.astype(bool), zero.astype(bool))
+    seen = {}
+
+    def target_fn(d, w_actual):
+        seen[d] = w_actual.copy()
+        return pd.Series({"a": 0.5, "b": 0.5})
+
+    run_backtest(target_fn, mkt, signal_dates=[idx[0], idx[2]], cost_on=False)
+    assert seen[idx[0]].empty                                    # first decision: no holdings yet
+    # exec on idx[1] (open->VWAP and VWAP->close returns are 0): 50/50 at the close; on idx[2] 'a' gains 10%
+    w = seen[idx[2]]
+    assert w["a"] == pytest.approx(0.55 / 1.05) and w["b"] == pytest.approx(0.5 / 1.05)
+
+
 def test_walk_forward_has_no_lookahead(monkeypatch):
     months = pd.date_range("2016-01-31", periods=40, freq="ME")
-    rows = [{"date": m, "code": f"s{i}", "tradable": True, "z_x": np.random.rand(), "fwd_rank": 0.0}
-            for m in months for i in range(30)]
+    # label of month k is realised the day after month k+1's rebalance
+    label = {m: (months[k + 1] + pd.Timedelta(days=1)) if k + 1 < len(months) else pd.NaT
+             for k, m in enumerate(months)}
+    rows = [{"date": m, "code": f"s{i}", "tradable": True, "z_x": np.random.rand(), "fwd_rank": 0.0,
+             "label_date": label[m]} for m in months for i in range(30)]
     data = pd.DataFrame(rows)
     seen = {}
 
@@ -84,6 +106,14 @@ def test_walk_forward_has_no_lookahead(monkeypatch):
     # first prediction month index = 24 + GAP; training uses months 0..(24+GAP-1-GAP) = 24 months
     assert first == months[24 + models.GAP]
     assert seen["n_train"] == 30 * (len(months) - 1 - models.GAP)
+
+
+def test_label_window_excludes_labels_realised_after_period_end():
+    from mf.dataset import label_window
+    d = pd.DataFrame({"date": pd.to_datetime(["2021-11-30", "2021-12-31"]),
+                      "label_date": pd.to_datetime(["2022-01-04", "2022-02-07"])})
+    d.loc[0, "label_date"] = pd.Timestamp("2021-12-31")
+    assert label_window(d, "2016-01-01", "2021-12-31").tolist() == [True, False]
 
 
 # ---------------------------------------------------------------- point-in-time fundamentals

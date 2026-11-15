@@ -7,38 +7,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import pandas as pd
-from tqdm import tqdm
 
-from mf.attribution import bench_weights
 from mf.backtest import Market, run_backtest
 from mf.config import CFG, PROC
 from mf.dataset import load_dataset
 from mf.metrics import perf
-from mf.optimizer import grinold_alpha, optimize
 from mf.panel import load_benchmarks, load_long
-from mf.risk import estimate_factor_returns, risk_model_at
-
-
-def topn_targets(scores: pd.Series, n: int) -> dict:
-    out = {}
-    for d, s in scores.dropna().groupby(level=0):
-        top = s.droplevel(0).nlargest(n)
-        out[d] = pd.Series(1.0 / len(top), index=top.index)
-    return out
-
-
-def optimised_targets(score: pd.Series, data, fret, resid, pcfg=None, label="opt") -> tuple[dict, pd.DataFrame]:
-    targets, info, w0 = {}, [], None
-    dates = sorted(score.dropna().index.get_level_values(0).unique())
-    for d in tqdm(dates, desc=label):
-        s = score.loc[d].dropna()
-        X, F, D = risk_model_at(d, data, fret, resid)
-        g = data[data.date == d].set_index("code")
-        alpha = grinold_alpha(s, D.reindex(s.index).fillna(D.median()))
-        w, inf = optimize(alpha, bench_weights(data, d), X, F, D, w0, g.tradable, pcfg)
-        targets[d], w0 = w, w
-        info.append({"date": d, **inf})
-    return targets, pd.DataFrame(info).set_index("date")
+from mf.portfolio import optimised_backtest, topn_targets
+from mf.risk import estimate_factor_returns
 
 
 if __name__ == "__main__":
@@ -68,8 +44,7 @@ if __name__ == "__main__":
     calib = {}
     for lam in (2.0, 10.0, 50.0):
         pc = {**CFG["portfolio"], "risk_aversion": lam}
-        tg, inf = optimised_targets(is_score, data, fret, resid, pc, f"calib λ={lam}")
-        bt = run_backtest(tg, mkt, end=S["is_end"])
+        bt, inf = optimised_backtest(is_score, data, fret, resid, mkt, pc, f"calib λ={lam}", end=S["is_end"])
         p = perf(bt["ret"], bench, bt["turnover"], bt["cost"])
         calib[lam] = {"ex_ante_te": inf.ex_ante_te.mean(), "IR": p["信息比率"], "超额年化": p["超额年化"],
                       "跟踪误差": p["跟踪误差"], "持仓数": inf.n_holdings.mean()}
@@ -79,14 +54,13 @@ if __name__ == "__main__":
     pcfg = {**CFG["portfolio"], "risk_aversion": lam_best}
 
     # ---- final portfolios over the whole walk-forward window
-    portfolios = {}
-    opt_targets, opt_info = optimised_targets(scores[best], data, fret, resid, pcfg, "optimised")
-    portfolios[f"组合优化({best})"] = opt_targets
+    main = f"组合优化({best})"
+    opt_bt, opt_info = optimised_backtest(scores[best], data, fret, resid, mkt, pcfg, "optimised")
+    opt_targets = opt_bt["targets"]
+    results = {main: opt_bt}
     for m in scores.columns:
-        portfolios[f"Top{CFG['portfolio']['topn']}等权({m})"] = topn_targets(scores[m], CFG["portfolio"]["topn"])
-
-    results = {name: run_backtest(tg, mkt) for name, tg in portfolios.items()}
-    results[f"组合优化({best}) 无成本"] = run_backtest(opt_targets, mkt, cost_on=False)
+        results[f"Top{CFG['portfolio']['topn']}等权({m})"] = run_backtest(topn_targets(scores[m], CFG["portfolio"]["topn"]), mkt)
+    results[f"{main} 无成本"] = run_backtest(opt_targets, mkt, cost_on=False)   # same targets, zero costs
     pickle.dump({"results": results, "opt_info": opt_info, "calib": calib, "lam": lam_best,
                  "best": best, "opt_targets": opt_targets}, open(PROC / "backtests.pkl", "wb"))
 

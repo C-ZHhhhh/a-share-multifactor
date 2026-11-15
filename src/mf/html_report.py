@@ -23,7 +23,7 @@ SHORT_CN = {"size": "市值", "ep": "盈利收益率 EP", "bp": "账面市值比
             "max_ret_20": "20日最大涨幅", "turn_20": "20日换手率", "abn_turn": "异常换手", "illiq_20": "非流动性",
             "pv_corr_20": "量价相关性", "skew_60": "60日偏度"}
 STYLE_CN = {"industry": "行业", "size": "市值", "beta": "Beta", "momentum": "动量", "volatility": "波动率",
-            "value": "价值", "liquidity": "流动性", "specific+trading": "个股选择+交易"}
+            "value": "价值", "liquidity": "流动性", "cost": "交易成本", "specific": "个股特异(含权重漂移)"}
 
 
 def _git_commit() -> str:

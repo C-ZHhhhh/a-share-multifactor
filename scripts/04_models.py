@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import pandas as pd
 
 from mf.config import CFG, PROC
-from mf.dataset import load_dataset
+from mf.dataset import label_window, load_dataset
 from mf.factor_test import ic_series, ic_stats, quantile_returns
 from mf.models import predict_gbdt, predict_icir, predict_ridge
 
@@ -32,7 +32,7 @@ if __name__ == "__main__":
         d = data.set_index(["date", "code"]).join(scores[name].rename("pred"), how="inner").reset_index()
         d = d[d.date >= first_pred]            # common evaluation window for all models
         for per, (a, b) in {"IS": (first_pred, S["is_end"]), "OOS": (S["oos_start"], S["oos_end"])}.items():
-            sub = d[(d.date >= a) & (d.date <= b)]
+            sub = d[label_window(d, a, b)]     # only labels realised inside the period
             st = ic_stats(ic_series(sub, "pred"))
             q = quantile_returns(sub, "pred", 10)
             ls = q[10] - q[1]

@@ -7,6 +7,10 @@ s.t.    sum(w) = 1, 0 <= w <= b + max_active   (active-weight cap: an absolute c
         |active size exposure|   <= size_dev
         0.5 * ||w - w0||_1       <= turnover_limit
         w_i <= w0_i  for stocks that cannot be bought (not tradable at signal)
+
+w0 is the portfolio's ACTUAL weight vector at the signal close (drifted, after any blocked trades),
+supplied by the backtest. Holdings that have left the universe must be sold; their weight counts
+towards the turnover budget.
 """
 from __future__ import annotations
 
@@ -32,6 +36,7 @@ def optimize(alpha: pd.Series, bench: pd.Series, X: pd.DataFrame, F: pd.DataFram
     b = bench.reindex(names).fillna(0).values
     b = b / b.sum()
     w_prev = (w0.reindex(names).fillna(0).values if w0 is not None else np.zeros(len(names)))
+    out_w = float(w0[~w0.index.isin(names)].sum()) if w0 is not None else 0.0   # forced sells (left universe)
     can_buy = buyable.reindex(names).fillna(False).values
     has_alpha = alpha.reindex(names).notna().values
     ind_cols = [c for c in X.columns if c not in ("size", "beta", "momentum", "volatility", "value", "liquidity")]
@@ -53,8 +58,10 @@ def optimize(alpha: pd.Series, bench: pd.Series, X: pd.DataFrame, F: pd.DataFram
              w <= np.where(can_buy & has_alpha, cap, w_prev),
              cp.abs(Xi.T @ act) <= pcfg["industry_dev"] * relax,
              cp.abs(xs @ act) <= pcfg["size_dev"] * relax]
-        if w0 is not None and w_prev.sum() > 0.5:
-            c.append(0.5 * trade <= pcfg["turnover_limit"] * relax)
+        for name, lim in (pcfg.get("style_limits") or {}).items():   # optional extra style-exposure limits
+            c.append(cp.abs(X[name].values @ act) <= lim * relax)
+        if w0 is not None and w_prev.sum() + out_w > 0.5:
+            c.append(0.5 * (trade + out_w) <= pcfg["turnover_limit"] * relax)
         return c
 
     status = None
@@ -74,5 +81,5 @@ def optimize(alpha: pd.Series, bench: pd.Series, X: pd.DataFrame, F: pd.DataFram
     av = wv - b
     info = {"status": status, "relax": relax, "n_holdings": int((wv > 0).sum()),
             "ex_ante_te": float(np.sqrt(np.sum((Lf.T @ (X.values.T @ av)) ** 2) + np.sum(D.values * av ** 2)) * np.sqrt(12)),
-            "turnover": float(0.5 * np.abs(wv - w_prev).sum())}
+            "turnover": float(0.5 * (np.abs(wv - w_prev).sum() + out_w))}
     return res[res > 0], info
