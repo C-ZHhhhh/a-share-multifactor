@@ -9,7 +9,7 @@ Models
 ------
 1. icir   : equal-risk composite, factor weights = rolling 24m mean(IC)/std(IC)
 2. ridge  : cross-sectional Ridge regression on selected factors -> rank label
-3. gbdt   : HistGradientBoosting on all 17 factors (non-linear + interactions)
+3. gbdt   : HistGradientBoosting on all 19 factors (non-linear + interactions)
 """
 from __future__ import annotations
 

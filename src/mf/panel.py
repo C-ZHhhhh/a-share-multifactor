@@ -97,7 +97,7 @@ def infer_st(df: pd.DataFrame, window: int = 60, min_hits: int = 3) -> pd.Series
     """ST stocks trade with a ±5% limit (main board). Flag a stock-day as ST when, over the
     past `window` days, its close/high/low touched a 5% limit price at least `min_hits` times
     and it never moved more than 5.5%. Parameters grid-searched against baostock's true isST
-    flag on the 180-stock cross-validation set (precision 0.78 / recall 0.70)."""
+    flag on the 180-stock cross-validation set (precision 0.815 / recall 0.698, see data_audit.md)."""
     main_board = ~(df.code.str.startswith("sh.688") |
                    (df.code.str.startswith(("sz.300", "sz.301")) & (df.date >= "2020-08-24")))
     up5, dn5 = np.round(df.preclose * 1.05, 2), np.round(df.preclose * 0.95, 2)

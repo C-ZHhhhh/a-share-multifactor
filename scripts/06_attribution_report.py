@@ -1,4 +1,4 @@
-"""Step 6: IS vs OOS evaluation, Brinson + factor attribution, figures and results tables."""
+"""Step 6: IS vs OOS evaluation, Brinson + factor attribution, figures, results tables and holdings export."""
 import json
 import pickle
 import sys
@@ -13,6 +13,7 @@ import pandas as pd
 from mf.attribution import active_exposure_series, brinson, factor_attribution
 from mf.config import CFG, FIG, PROC, REPORTS
 from mf.dataset import load_dataset
+from mf.holdings import write_holdings
 from mf.metrics import fmt_table, perf, yearly_table
 from mf.panel import load_benchmarks, load_index, load_long, to_wide
 from mf.plotting import setup_style
@@ -131,8 +132,21 @@ if __name__ == "__main__":
         "样本外分行业 (累计):", "", pct(pd.concat([oos_br.head(5), oos_br.tail(5)])).to_markdown(), "",
         "## 因子收益归因 (年化主动收益贡献)", "", pct(fa_df).to_markdown(), "",
         "![attr](figures/attribution.png)", "",
+        "## 实际持仓", "",
+        "每月组合的完整持仓见 [holdings/](holdings/): 最新一期的可读版本 [latest_portfolio.md](holdings/latest_portfolio.md), "
+        "全部历史 `optimized_monthly.csv` (组合优化) 和 `top50_equal_weight_monthly.csv` (Top50 等权对照组)。", "",
     ]
     (REPORTS / "results.md").write_text("\n".join(md), encoding="utf-8")
+
+    # ---------------- holdings export (the actual stock lists behind every backtest number)
+    scores = pd.read_parquet(PROC / "model_scores.parquet")
+    scores = scores[scores.index.get_level_values(0) >= first_pred]
+    n = CFG["portfolio"]["topn"]
+    top = {d: pd.Series(1.0 / min(n, len(s)), index=s.droplevel(0).nlargest(n).index)
+           for d, s in scores[best].dropna().groupby(level=0)}
+    write_holdings({main: (bt["opt_targets"], scores[best]), f"Top{n}等权({best})": (top, scores[best])},
+                   data, opt_info, main)
+    print("holdings written to", REPORTS / "holdings")
     for k, v in perf_tabs.items():
         print(k); print(v.to_string())
     print(br_df); print(fa_df)

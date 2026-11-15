@@ -33,6 +33,7 @@
 - `reports/figures/nav.png`：净值和超额。重点讲样本内 2019–2020 的回撤，以及样本外 2023–2024 的上升。
 - `reports/factor_tests.md`：样本内和样本外的因子对比表。重点讲质量和成长类因子在样本外失效。
 - `reports/figures/attribution.png`：右图是主动风格暴露，可以看到长期是负 Beta、负波动。
+- `reports/holdings/latest_portfolio.md`：最新一期的 48 只持仓。面试官问"你的模型选出了哪些股票"时直接打开，重点讲为什么排名第 503 的工商银行权重最大（控制市值和行业暴露的仓位），而排名第 605 的茅台权重为 0。
 - **代码，最能体现严谨性的四个地方**（面试官说 "show me the code" 时直接跳过去）：
   1. `src/mf/models.py` 里的 `GAP = 1` 和 `_walk_forward`，以及 `tests/test_core.py::test_walk_forward_has_no_lookahead`
   2. `src/mf/panel.py` 里的 `load_reports`（公告日估计）和 `attach_fundamentals`（`allow_exact_matches=False`，复权因子换算股本）
@@ -244,6 +245,12 @@ A：
 - **其他手段**：参数敏感性分析、逐年看 IC 的稳定性、Deflated Sharpe。
 
 ### C4. 组合优化
+
+**Q：你的模型最后选出了哪些股票？为什么排名靠后的股票也在组合里？**
+A：
+- 每月一份持仓，全部导出在 `reports/holdings/`。最新一期持有 48 只，排名靠前的股票（如排名第 1 的吉林敖东）被超配到上限，即基准权重 + 3%。
+- 工商银行排名第 503，却是权重最大的持仓（5.49%，基准 3.87%）。原因是茅台等大市值股票被清零后，组合的市值暴露会偏小，而约束要求市值暴露偏离不超过 0.2σ、行业偏离不超过 5%，优化器就用大盘银行股把暴露拉回来。
+- 所以组合里有"赚超额的仓位"和"控风险的仓位"两类，这也是转移系数只有 0.3 的直观体现。
 
 **Q：讲一下你的优化问题。**
 A：

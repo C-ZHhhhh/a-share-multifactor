@@ -96,3 +96,7 @@
 | 样本外 OOS | -0.84%     | 0.07%  | -0.78% | 0.58%      | -0.98%       | -0.18%  | 1.07%       | 1.55%    | 2.61%              |
 
 ![attr](figures/attribution.png)
+
+## 实际持仓
+
+每月组合的完整持仓见 [holdings/](holdings/): 最新一期的可读版本 [latest_portfolio.md](holdings/latest_portfolio.md), 全部历史 `optimized_monthly.csv` (组合优化) 和 `top50_equal_weight_monthly.csv` (Top50 等权对照组)。
