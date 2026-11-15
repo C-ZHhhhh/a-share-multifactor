@@ -11,9 +11,10 @@ Timeline for a rebalance signal generated at the close of day t:
 Targets can be a fixed dict {signal_date: weights} or a callable target_fn(signal_date, w_actual) that is
 called at the close of each signal date with the portfolio's ACTUAL drifted weights (after blocked trades),
 so a path-dependent optimiser (turnover limit, no-buy constraint) sees the real current holdings.
-Costs are paid out of NAV. When buys are blocked the unspent weight stays in cash (0 return) until the next
-rebalance; when sells are blocked the planned buys are scaled down. A trade is never turned around: a stock
-the target wants to sell is never bought, and blocked names are never traded (see _fill).
+The account holds position values and cash (see run_backtest). When buys are blocked the unspent weight stays
+in cash (0 return) until the next rebalance; when sells are blocked the planned buys are scaled down. A trade
+is never turned around: a stock the target wants to sell is never bought, and blocked names are never traded
+(see _fill). Trading costs are paid from cash.
 """
 from __future__ import annotations
 
@@ -80,6 +81,20 @@ def stamp_rate(d: pd.Timestamp) -> float:
 
 def run_backtest(targets, mkt: Market, start=None, end=None, cost_on: bool = True,
                  signal_dates=None, cost_mult: float = 1.0) -> dict:
+    """Account-based simulation: a vector of position VALUES plus a CASH balance (NAV = sum(values) + cash,
+    starting at 1). Four position concepts are kept apart in the output:
+
+      at_signal  {signal date: weights}     actual weights at the signal close = the optimiser's starting point
+      targets    {signal date: weights}     what the optimiser asked for (fractions of NAV, sum 1)
+      pre_trade  {exec date: weights}       actual drifted weights at the execution VWAP, before trading
+      holdings   {exec date: weights}       executed post-trade weights (fractions of post-trade NAV)
+      cash       {exec date: weight}        post-trade cash weight; holdings + cash = 1
+
+    Execution: blocked names keep their weight (_fill); sells are credited and buys paid from cash, and
+    commission, slippage and stamp duty are paid from cash. If cash would go negative, all buys are scaled
+    down by the same factor until it is exactly zero, so the account never borrows. Cash earns 0.
+    turnover = 0.5 * (buys + sells) / pre-trade NAV (executed, not planned); cost = costs / pre-trade NAV.
+    """
     c = CFG["costs"]
     dates = mkt.ret.index
     codes = mkt.ret.columns
@@ -100,49 +115,58 @@ def run_backtest(targets, mkt: Market, start=None, end=None, cost_on: bool = Tru
     NB, NS = mkt.no_buy.values, mkt.no_sell.values
     pos_of = {d: i for i, d in enumerate(dates)}
 
-    w = np.zeros(len(codes))
-    nav, navs, turn_log, cost_log, hold_log, trade_log, pre_log = 1.0, [], {}, {}, {}, {}, {}
-    cur = lambda: pd.Series(w[w > 0], index=codes[w > 0])
+    V = np.zeros(len(codes))          # position values
+    C = 1.0                           # cash
+    navs, turn_log, cost_log, hold_log, trade_log, pre_log, cash_log, sig_log = [], {}, {}, {}, {}, {}, {}, {}
+    wser = lambda v, n: pd.Series(v[v > 0] / n, index=codes[v > 0])
+    cur = lambda: wser(V, V.sum() + C)
     sig_set = set(sig_dates)
     if target_fn:                        # signals decided before the first simulated day: start from cash
         for s_ in sig_dates:
             if s_ < start:
+                sig_log[s_] = cur()
                 targets[s_] = target_fn(s_, cur())
     for d in days:
         i = pos_of[d]
         if d in exec_map and exec_map[d] in targets:
-            r1 = R1[i]
-            g1 = 1 + w @ r1
-            w = w * (1 + r1) / g1 if g1 > 0 else w
-            nav *= g1
+            V = V * (1 + R1[i])                                  # open -> VWAP on the old book
+            nav0 = V.sum() + C
+            w_pre = V / nav0
             tgt = np.zeros(len(codes))
             t = targets[exec_map[d]]
             tgt[[col[k] for k in t.index if k in col]] = t[[k for k in t.index if k in col]].values
-            new = _fill(w, tgt, NB[i], NS[i])
-            buy = np.clip(new - w, 0, None).sum()
-            sell = np.clip(w - new, 0, None).sum()
-            cost = (buy * (c["commission"] + c["slippage"]) +
-                    sell * (c["commission"] + c["slippage"] + stamp_rate(d))) * cost_mult if cost_on else 0.0
-            nav *= (1 - cost)
-            turn_log[d], cost_log[d] = 0.5 * (buy + sell), cost
-            dw = new - w
-            trade_log[d] = pd.Series(dw[dw != 0], index=codes[dw != 0])   # traded weight, fraction of current NAV
-            pre_log[d] = cur()
-            w = new
-            hold_log[d] = pd.Series(w[w > 0], index=codes[w > 0])
-            r2 = R2[i]
-            g2 = 1 + w @ r2
-            w = w * (1 + r2) / g2 if g2 > 0 else w
-            nav *= g2
+            new = _fill(w_pre, tgt, NB[i], NS[i])
+            cb = (c["commission"] + c["slippage"]) * cost_mult if cost_on else 0.0
+            cs = (c["commission"] + c["slippage"] + stamp_rate(d)) * cost_mult if cost_on else 0.0
+            buy = np.clip(new - w_pre, 0, None)
+            sell = np.clip(w_pre - new, 0, None)
+            c0 = C / nav0
+            cash_w = c0 + sell.sum() * (1 - cs) - buy.sum() * (1 + cb)
+            if cash_w < 0 and buy.sum() > 0:                     # not enough cash: scale all buys down
+                f = max(0.0, (c0 + sell.sum() * (1 - cs)) / (buy.sum() * (1 + cb)))
+                buy = buy * f
+                new = w_pre - sell + buy
+                cash_w = c0 + sell.sum() * (1 - cs) - buy.sum() * (1 + cb)
+            cost = cb * buy.sum() + cs * sell.sum()
+            V = new * nav0
+            C = max(cash_w, 0.0) * nav0
+            nav1 = V.sum() + C
+            turn_log[d], cost_log[d] = 0.5 * (buy.sum() + sell.sum()), cost
+            dw = new - w_pre
+            trade_log[d] = pd.Series(dw[dw != 0], index=codes[dw != 0])   # traded weight, fraction of pre-trade NAV
+            pre_log[d] = wser(w_pre, 1.0)
+            hold_log[d] = wser(V, nav1)
+            cash_log[d] = C / nav1
+            V = V * (1 + R2[i])                                  # VWAP -> close on the new book
         else:
-            r = R[i]
-            g = 1 + w @ r
-            w = w * (1 + r) / g if g > 0 else w
-            nav *= g
-        navs.append(nav)
-        if target_fn and d in sig_set:   # close of a signal date: decide next targets from actual weights
-            targets[d] = target_fn(d, cur())
+            V = V * (1 + R[i])
+        navs.append(V.sum() + C)
+        if d in sig_set:                 # close of a signal date: record actual weights, decide next targets
+            sig_log[d] = cur()
+            if target_fn:
+                targets[d] = target_fn(d, cur())
     nav_s = pd.Series(navs, index=days, name="nav")
     return {"nav": nav_s, "ret": nav_s.pct_change().fillna(nav_s.iloc[0] - 1),
-            "turnover": pd.Series(turn_log), "cost": pd.Series(cost_log), "holdings": hold_log,
-            "trades": trade_log, "pre_trade": pre_log, "targets": targets}
+            "turnover": pd.Series(turn_log, dtype=float), "cost": pd.Series(cost_log, dtype=float),
+            "holdings": hold_log, "cash": pd.Series(cash_log, dtype=float), "trades": trade_log,
+            "pre_trade": pre_log, "targets": targets, "at_signal": sig_log}

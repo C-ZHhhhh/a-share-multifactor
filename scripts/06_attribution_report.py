@@ -14,7 +14,7 @@ import pandas as pd
 from mf.attribution import active_exposure_series, brinson, constraint_check, factor_attribution, reconcile
 from mf.config import CFG, FIG, PROC, REPORTS
 from mf.dataset import load_dataset
-from mf.holdings import write_holdings
+from mf.holdings import execution_summary, write_holdings
 from mf.html_report import build_html_report
 from mf.metrics import fmt_table, perf, yearly_table
 from mf.panel import load_benchmarks, load_index, load_long, to_wide
@@ -75,7 +75,9 @@ if __name__ == "__main__":
     fig, axes = plt.subplots(1, 3, figsize=(14, 3.5))
     opt_info["ex_ante_te"].plot(ax=axes[0], title="事前跟踪误差 (年化)")
     opt_info["n_holdings"].plot(ax=axes[1], title="持仓股票数")
-    res[main]["turnover"].plot(ax=axes[2], title="单边换手 (每次调仓)", kind="line")
+    opt_info["planned_turnover"].plot(ax=axes[2], label="计划 (目标 vs 信号日实际持仓)")
+    res[main]["turnover"].plot(ax=axes[2], label="实际成交", title="单边换手 (每次调仓)")
+    axes[2].legend(fontsize=8)
     plt.tight_layout(); plt.savefig(FIG / "optimizer_diag.png", dpi=120); plt.close()
 
     # ---------------- attribution
@@ -131,6 +133,21 @@ if __name__ == "__main__":
     axes[1].set_title("主动风格暴露 (σ)"); axes[1].legend(fontsize=7)
     plt.tight_layout(); plt.savefig(FIG / "attribution.png", dpi=130); plt.close()
 
+    # ---------------- holdings export (the actual stock lists behind every backtest number)
+    scores = pd.read_parquet(PROC / "model_scores.parquet")
+    scores = scores[scores.index.get_level_values(0) >= first_pred]
+    n = CFG["portfolio"]["topn"]
+    top_name = f"Top{n}等权({best})"
+    tables = write_holdings({main: (res[main], scores[best]), top_name: (res[top_name], scores[best])},
+                            data, opt_info, main, daily_ret.index)
+    exec_sum = execution_summary(tables[main])
+    print("holdings written to", REPORTS / "holdings")
+
+    pct1 = lambda v: f"{v:.2%}"
+    ex_dates = pd.to_datetime(exec_sum.exec_date)
+    exec_tabs = {pn: exec_sum[((ex_dates >= pd.Timestamp(a)) & (ex_dates <= pd.Timestamp(bb))).values]
+                 for pn, (a, bb) in periods.items()}
+
     pct = lambda df: df.map(lambda v: f"{v:.2%}")
     calib = bt["calib"].copy()
     for c in ["ex_ante_te", "超额年化", "跟踪误差"]:
@@ -170,22 +187,22 @@ if __name__ == "__main__":
         "个股特异收益、月内权重漂移 (暴露按调仓日权重计算) 和调仓日执行时点。", "",
         pct(fa_df).to_markdown(), "",
         "![attr](figures/attribution.png)", "",
+        "## 仓位口径与执行", "",
+        "回测是一个账户: 持仓市值 + 现金 = 净值。四种仓位分开记录 (holdings CSV 中各占一列):",
+        "**信号日实际持仓** (优化器起点) → **目标仓位** (优化器输出, 满仓) → **执行日交易前仓位** (VWAP 时) → **成交后仓位** (含现金)。",
+        "换手有两个口径: 优化器约束的是**计划换手** (目标 vs 信号日实际持仓); 绩效表和成本用的是**实际成交换手** (成交后 vs 交易前)。"
+        "涨停 / 停牌买不进的部分留作现金, 跌停 / 停牌卖不掉的保留, 成本从现金支付, 现金不足时等比例缩减买入。", "",
+        pd.DataFrame({pn: {"调仓次数": len(es), "平均计划换手": pct1(es.planned_turnover.mean()), "平均实际换手": pct1(es.executed_turnover.mean()),
+                           "平均成交后现金": pct1(es.cash_after.mean()), "最大成交后现金": pct1(es.cash_after.max()),
+                           "目标与成交后差异(平均, 单边)": pct1(es.target_minus_executed.mean()),
+                           "买入受阻(只次)": int(es.n_buy_blocked.sum()), "买入缩减(只次)": int(es.n_buy_scaled.sum()),
+                           "卖出受阻(只次)": int(es.n_sell_blocked.sum())}
+                      for pn, es in exec_tabs.items()}).T.to_markdown(), "",
         "## 实际持仓", "",
         "每月组合的完整持仓见 [holdings/](holdings/): 最新一期的可读版本 [latest_portfolio.md](holdings/latest_portfolio.md), "
         "全部历史 `optimized_monthly.csv` (组合优化) 和 `top50_equal_weight_monthly.csv` (Top50 等权对照组)。", "",
     ]
     (REPORTS / "results.md").write_text("\n".join(md), encoding="utf-8")
-
-    # ---------------- holdings export (the actual stock lists behind every backtest number)
-    scores = pd.read_parquet(PROC / "model_scores.parquet")
-    scores = scores[scores.index.get_level_values(0) >= first_pred]
-    n = CFG["portfolio"]["topn"]
-    top = {d: pd.Series(1.0 / min(n, len(s)), index=s.droplevel(0).nlargest(n).index)
-           for d, s in scores[best].dropna().groupby(level=0)}
-    top_name = f"Top{n}等权({best})"
-    tables = write_holdings({main: (bt["opt_targets"], scores[best]), top_name: (top, scores[best])},
-                            data, opt_info, main)
-    print("holdings written to", REPORTS / "holdings")
 
     # ---------------- interactive HTML report (one per run)
     payload = build_html_report(
@@ -194,8 +211,27 @@ if __name__ == "__main__":
         scores=scores[best], data=data, br_df=br_df, fa_df=fa_df, oos_br=oos_br, holdings_main=tables[main],
         factor_tests_is=pd.read_csv(PROC / "factor_tests_is.csv"),
         selected=json.load(open(PROC / "selected_factors.json")))
+    # ---------------- forward (post-freeze) sample: separate from the repeatedly tested history
+    from mf.forward import forward_summary, load_frozen, register, rule_diff, write_forward_md
+    frozen = load_frozen()
+    if frozen:
+        diff = rule_diff(frozen, best, bt["lam"])
+        reg = register(res[main]["targets"], frozen["history_end"], compliant=not diff)
+        fwd = forward_summary(res[main]["ret"], bench, frozen["history_end"], reg, diff)
+        fwd.update({"frozen_on": frozen["frozen_on"], "frozen_commit": frozen["commit"]})
+        write_forward_md(fwd)
+        print(f"forward: {fwd['days']} days after {frozen['history_end']}, valid={fwd['valid']}, "
+              f"registered targets={len(reg)}", "rule diff: " + ", ".join(diff) if diff else "")
+    else:
+        fwd = None
+        print("rules not frozen yet (run scripts/freeze_rules.py once development is finished)")
+    payload["forward"] = fwd
     payload["reconcile"] = {"columns": list(rec_df.columns), "rows": {k: [float(v) for v in row] for k, row in rec_df.iterrows()}}
     payload["constraints"] = {k: {kk: float(vv) for kk, vv in row.items()} for k, row in cons_df.iterrows()}
+    payload["execution"] = {"dates": [str(d) for d in exec_sum.index],
+                            **{c: [float(v) for v in exec_sum[c]] for c in
+                               ["planned_turnover", "executed_turnover", "cash_after", "target_minus_executed",
+                                "n_buy_blocked", "n_buy_scaled", "n_sell_blocked"]}}
     json.dump(payload, open(PROC / "report_payload.json", "w"), ensure_ascii=False)
     print("report payload saved; run scripts/08_html_report.py to build reports/report.html")
     for k, v in perf_tabs.items():

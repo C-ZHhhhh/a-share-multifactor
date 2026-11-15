@@ -81,5 +81,5 @@ def optimize(alpha: pd.Series, bench: pd.Series, X: pd.DataFrame, F: pd.DataFram
     av = wv - b
     info = {"status": status, "relax": relax, "n_holdings": int((wv > 0).sum()),
             "ex_ante_te": float(np.sqrt(np.sum((Lf.T @ (X.values.T @ av)) ** 2) + np.sum(D.values * av ** 2)) * np.sqrt(12)),
-            "turnover": float(0.5 * (np.abs(wv - w_prev).sum() + out_w))}
+            "planned_turnover": float(0.5 * (np.abs(wv - w_prev).sum() + out_w))}   # target vs actual at signal
     return res[res > 0], info

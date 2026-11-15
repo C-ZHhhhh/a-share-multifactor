@@ -121,6 +121,17 @@ footer { margin-top: 40px; color: var(--text-muted); font-size: 12.5px; }
     <p class="note">每次运行 <code>run_all.sh</code> 时自动生成。所有数字都来自本次运行的数据与代码，是历史回测的研究输出，不构成投资建议。</p>
   </header>
 
+  <section id="fwdSection" style="margin-top:20px">
+    <h2>前瞻跟踪：冻结规则之后的新样本</h2>
+    <p class="lead" id="fwdLead"></p>
+    <div class="tiles" id="fwdTiles"></div>
+    <div class="card" id="fwdChartCard" style="margin-top:14px;display:none"><h3>前瞻区间超额净值</h3><div class="chart" id="fwdChart"></div></div>
+    <details><summary>已登记的目标仓位</summary><div class="tbl-wrap" id="fwdReg"></div></details>
+  </section>
+
+  <h2 style="margin:36px 0 0;font-size:19px">历史回测（2018-03 ~ 冻结日，已在开发中反复查看）</h2>
+  <p class="lead" style="color:var(--text-secondary);font-size:13.5px;margin:4px 0 0">下面所有结果，包括"样本外"，都在 v1–v5 的修订中被看过多次，只能当作历史回测，不能当作一次性的样本外检验。</p>
+
   <div class="toolbar" role="toolbar" aria-label="区间">
     <span class="lbl">区间</span>
     <div class="seg" id="range">
@@ -175,7 +186,7 @@ footer { margin-top: 40px; color: var(--text-muted); font-size: 12.5px; }
       <div class="card"><h3>行业主动权重</h3><p class="sub">组合行业权重 − 基准行业权重，仅列 |偏离| ≥ 0.5%（最多超配、低配各 8 个），约束上限 ±5%</p><div class="chart" id="indChart"></div></div>
       <div class="card"><h3>基准前 10 大权重股的处理</h3><p class="sub">大市值股票不一定按基准持有：排名低的可能被完全剔除</p><div class="tbl-wrap" id="benchTopTable"></div></div>
     </div>
-    <div class="card"><h3>全部持仓</h3><p class="sub">点击表头排序。模型排名 1 = 最看好。"主动权重" = 组合权重 − 基准权重</p><div class="tbl-wrap scroll-y" id="holdTable"></div>
+    <div class="card"><h3>全部目标持仓</h3><p class="sub">点击表头排序。模型排名 1 = 最看好。"目标主动权重" = 目标权重 − 基准权重。历史每月的信号日实际持仓、目标、交易前、成交后和现金见 reports/holdings/ 的 CSV</p><div class="tbl-wrap scroll-y" id="holdTable"></div>
       <p class="sub" id="soldList" style="margin-top:10px"></p></div>
   </section>
 
@@ -193,12 +204,13 @@ footer { margin-top: 40px; color: var(--text-muted); font-size: 12.5px; }
 
   <section>
     <h2>7. 优化器诊断</h2>
-    <p class="lead">每月调仓时优化器的状态。事前跟踪误差是风险模型预测的组合偏离基准的程度；换手受 40% 上限约束。</p>
+    <p class="lead">每月调仓时优化器的状态。事前跟踪误差是风险模型预测的组合偏离基准的程度。换手有两个口径：<b>计划换手</b>是目标仓位相对信号日实际持仓（优化器的起点），受 40% 上限约束；<b>实际成交换手</b>是成交后相对执行日交易前的仓位，用于计算成本和绩效。</p>
     <div class="grid3">
       <div class="card"><h3>事前跟踪误差（年化）</h3><div class="chart" id="teChart"></div></div>
       <div class="card"><h3>持仓股票数</h3><div class="chart" id="nChart"></div></div>
-      <div class="card"><h3>单边换手（每次调仓）</h3><div class="chart" id="toChart"></div></div>
+      <div class="card"><h3>单边换手：计划 vs 实际成交</h3><div class="legend" id="toLegend"></div><div class="chart" id="toChart"></div></div>
     </div>
+    <div class="card"><h3>成交后现金</h3><p class="sub">涨停或停牌买不进的部分留作现金，交易成本也从现金支付；现金不计利息，下次调仓时重新投入</p><div class="chart" id="cashChart"></div></div>
     <div class="card"><h3>约束满足率（按实际成交后的持仓检查）</h3><p class="sub">优化器每月以实际持仓为起点；卖不掉的股票（跌停、停牌）和优化器放宽约束的月份会导致个别月份不满足</p><div class="tbl-wrap" id="consTable"></div></div>
   </section>
 
@@ -525,13 +537,13 @@ function renderStatic() {
     out.map(f => `${f.short}（${f.why}）`).join("；") + "。另外 |ICIR| 也需不低于 0.5。" : "";
   // latest portfolio
   const L = D.latest, hs = L.holdings;
-  $("latestLead").textContent = `信号日 ${L.date} 收盘后生成，下一交易日按成交均价调仓，持有到下一个月末。可打分股票 ${L.n_ranked} 只 → 持有 ${hs.length} 只。` +
+  $("latestLead").textContent = `这是<目标仓位>：信号日 ${L.date} 收盘后由优化器生成，下一交易日按成交均价执行（数据截止时尚未执行），持有到下一个月末。可打分股票 ${L.n_ranked} 只 → 目标持有 ${hs.length} 只。"计划调整"是目标相对信号日实际持仓的变化。`.replace("<目标仓位>", "目标仓位") +
     "排名靠前的股票通常被买到上限（基准权重 + 3%），这是赚超额的仓位；基准权重大但排名一般的股票也可能被持有，用来把行业和市值暴露拉回基准附近。";
   const LT = $("latestTiles"); LT.replaceChildren();
   const sw = hs.slice().sort((a, b) => b.w - a.w);
-  tile(LT, "持仓股票数", String(hs.length), `新买入 ${hs.filter(x => x.new).length} 只，清仓 ${L.sold.length} 只`);
+  tile(LT, "目标持仓股票数", String(hs.length), `计划新买入 ${hs.filter(x => x.new).length} 只，计划清仓 ${L.sold.length} 只`);
   tile(LT, "前 10 大持仓合计", pct(sw.slice(0, 10).reduce((s, x) => s + x.w, 0), 1));
-  tile(LT, "本期单边换手", pct(L.turnover, 1), "上限 40%");
+  tile(LT, "计划单边换手", pct(L.turnover, 1), `上限 40%；信号日现金 ${pct(L.cash_at_signal ?? 0, 2)}`);
   tile(LT, "事前跟踪误差", pct(L.te, 1), L.relax > 1 ? `约束放宽 ${L.relax} 倍` : "约束未放宽");
   tile(LT, "排名前 100 的持仓", hs.filter(x => x.rank <= 100).length + " 只", `排名中位数 ${hs.map(x => x.rank).sort((a, b) => a - b)[Math.floor(hs.length / 2)]}`);
   const indS = L.industry.slice().sort((a, b) => b.value - a.value), indC = indS.length > 16 ? [...indS.slice(0, 8), ...indS.slice(-8)] : indS;
@@ -540,11 +552,11 @@ function renderStatic() {
   table($("benchTopTable"), { columns: ["代码", "名称", "基准权重", "组合权重"], align: ["l", "l", "r", "r"],
     rows: L.bench_top.map(x => ({ cells: [x.code, x.name, pct(x.b), pct(x.w)] })) });
   const tag = t => h("span", t, "tag");
-  table($("holdTable"), { columns: ["代码", "名称", "行业", "权重", "基准权重", "主动权重", "较上月", "模型排名"],
-    align: ["l", "l", "l", "r", "r", "r", "r", "r"],
-    sortable: [r => r.x.code, r => r.x.name, r => r.x.industry, r => r.x.w, r => r.x.b, r => r.x.a, r => r.x.new ? 9 : r.x.chg, r => r.x.rank],
-    rows: sw.map(x => ({ x, cells: [x.code, x.name, x.industry.replace(/^[A-Z]\d+/, ""), pct(x.w), pct(x.b), spct(x.a), x.new ? tag("新买入") : spct(x.chg), `${x.rank} / ${L.n_ranked}`] })) });
-  $("soldList").textContent = "本期清仓：" + (L.sold.map(s => `${s.name}（${s.code}）`).join("、") || "无");
+  table($("holdTable"), { columns: ["代码", "名称", "行业", "目标权重", "信号日实际持仓", "基准权重", "目标主动权重", "计划调整", "模型排名"],
+    align: ["l", "l", "l", "r", "r", "r", "r", "r", "r"],
+    sortable: [r => r.x.code, r => r.x.name, r => r.x.industry, r => r.x.w, r => r.x.w0, r => r.x.b, r => r.x.a, r => r.x.new ? 9 : r.x.chg, r => r.x.rank ?? 1e9],
+    rows: sw.map(x => ({ x, cells: [x.code, x.name, x.industry.replace(/^[A-Z]\d+/, ""), pct(x.w), pct(x.w0 ?? 0), pct(x.b), spct(x.a), x.new ? tag("新买入") : spct(x.chg), x.rank == null ? "-" : `${x.rank} / ${L.n_ranked}`] })) });
+  $("soldList").textContent = "计划清仓：" + (L.sold.map(s => `${s.name}（${s.code}）`).join("、") || "无");
   // attribution
   const BR = D.brinson, rowsB = Object.keys(BR).map(p => ({ cells: [p, spct(BR[p].allocation), spct(BR[p].selection), spct(BR[p].interaction), spct(BR[p]["合计"])] }));
   table($("brinsonTable"), { columns: ["区间", "行业配置", "行业内选股", "交互项", "合计"], rows: rowsB });
@@ -556,7 +568,16 @@ function renderStatic() {
   const md = D.monthly.dates, c1 = css("--series-1");
   lineChart($("teChart"), { dates: md, series: [{ name: "事前跟踪误差", color: c1, values: D.monthly.te }], yfmt: v => pct(v, 0), tipFmt: v => pct(v, 1), height: 180, shadeFrom: M.oos_start });
   lineChart($("nChart"), { dates: md, series: [{ name: "持仓数", color: c1, values: D.monthly.n }], yfmt: v => String(Math.round(v)), height: 180, shadeFrom: M.oos_start });
-  lineChart($("toChart"), { dates: md, series: [{ name: "单边换手", color: c1, values: D.monthly.turnover }], yfmt: v => pct(v, 0), tipFmt: v => pct(v, 1), height: 180, shadeFrom: M.oos_start });
+  if (D.execution) {
+    const E = D.execution, emap = Object.fromEntries(E.dates.map((d, i) => [d, i]));
+    const exT = md.map(d => emap[d] != null ? E.executed_turnover[emap[d]] : null);
+    const toS = [{ name: "计划", color: c1, values: D.monthly.turnover }, { name: "实际成交", color: css("--series-2"), values: exT }];
+    legend("toLegend", toS);
+    lineChart($("toChart"), { dates: md, series: toS, yfmt: v => pct(v, 0), tipFmt: v => v == null ? "待执行" : pct(v, 1), height: 180, shadeFrom: M.oos_start });
+    lineChart($("cashChart"), { dates: E.dates, series: [{ name: "成交后现金", color: c1, values: E.cash_after }], yfmt: v => pct(v, 2), tipFmt: v => pct(v, 3), height: 160, shadeFrom: M.oos_start, baseline: 0 });
+  } else {
+    lineChart($("toChart"), { dates: md, series: [{ name: "计划换手", color: c1, values: D.monthly.turnover }], yfmt: v => pct(v, 0), tipFmt: v => pct(v, 1), height: 180, shadeFrom: M.oos_start });
+  }
   // reconciliation & constraints
   if (D.reconcile) table($("recTable"), { columns: ["区间", ...D.reconcile.columns], rows: Object.entries(D.reconcile.rows).map(([k, v]) => ({ cells: [k, ...v.map(x => spct(x))] })) });
   if (D.constraints) { const ck = ["行业偏离满足率", "市值暴露满足率", "单票上限满足率", "换手上限满足率", "平均单边换手", "最大单边换手"];
@@ -594,7 +615,25 @@ function renderStatic() {
     ["训练起点", "预测从 " + M.first_pred + " 开始"], ["样本外", `${M.oos_start} ~ ${M.oos_end}`]];
   $("params").replaceChildren(...kv.map(([k, v]) => { const d = h("div", k + "："); d.appendChild(h("b", v)); return d; }));
 }
-function renderAll() { renderRange(); renderStatic(); }
+function renderForward() {
+  const F = D.forward;
+  if (!F) { $("fwdLead").textContent = "规则尚未冻结。"; return; }
+  $("fwdLead").textContent = `规则冻结于 ${F.frozen_on}（代码版本 ${F.frozen_commit}）。开发时看过的最后一个数据日是 ${F.history_end}，只有此后的收益算前瞻样本；每期目标仓位在第一次生成时登记，之后不可修改。` +
+    (F.days ? "" : " 目前还没有冻结之后的数据，更新数据后这里会出现第一批前瞻结果。");
+  const T = $("fwdTiles"); T.replaceChildren();
+  tile(T, "前瞻结果是否有效", F.valid ? "有效" : "无效", F.rules_compliant ? (F.targets_match_registry ? "规则和目标都与登记一致" : "目标与登记不一致：" + F.mismatch.join("、")) : "规则已偏离冻结版本：" + F.rule_diff.join("、"));
+  tile(T, "前瞻交易日", String(F.days), F.days ? `${F.start} ~ ${F.end}` : "尚无数据");
+  if (F.days) {
+    tile(T, "累计超额", spct(F.cum_excess), `组合 ${spct(F.cum_return)}，基准 ${spct(F.bench_cum_return)}`);
+    tile(T, "年化 IR", F.ir == null ? "-" : num(F.ir), F.ir == null ? "不足 60 个交易日" : "");
+    $("fwdChartCard").style.display = "";
+    let s = 1, b = 1; const ex = F.strat.map((r, i) => (s *= 1 + r, b *= 1 + F.bench[i], s / b));
+    lineChart($("fwdChart"), { dates: F.dates, series: [{ name: "超额净值", color: css("--series-1"), values: ex }], baseline: 1, height: 200 });
+  }
+  tile(T, "已登记目标", String(F.registered.length) + " 期", F.registered.length ? "最早 " + F.registered[0].signal_date : "");
+  table($("fwdReg"), { columns: ["信号日", "登记日期", "持仓数", "哈希", "符合冻结规则"], rows: F.registered.map(r => ({ cells: [r.signal_date, r.registered_on, r.n_holdings, r.hash, r.rules_compliant] })) });
+}
+function renderAll() { renderForward(); renderRange(); renderStatic(); }
 renderAll();
 let rt; window.addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(renderAll, 150); });
 if (window.matchMedia) window.matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", renderAll);

@@ -43,5 +43,10 @@ if __name__ == "__main__":
     print(tab.round(4).to_string())
     is_tab = tab[tab["区间"] == "IS"].set_index("模型")
     best = is_tab["ICIR(年化)"].idxmax()     # model choice made on IS only
+    from mf.forward import load_frozen
+    frozen = load_frozen()
+    if frozen and frozen["model"] != best:  # rules are frozen: keep the frozen model, but say so loudly
+        print(f"WARNING: the IS rule now picks {best}, but the frozen model is {frozen['model']}; using the frozen one")
+        best = frozen["model"]
     json.dump({"best_model": best, "first_pred": str(first_pred.date())}, open(PROC / "model_choice.json", "w"))
     print("model chosen on IS:", best)

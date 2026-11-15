@@ -120,7 +120,7 @@ def build_html_report(*, res: dict, main: str, top_name: str, bench: pd.Series, 
                   **{k: [_num(v) for v in s.values] for k, s in series.items()}},
         "monthly": {"dates": [d.strftime("%Y-%m-%d") for d in opt_info.index],
                     "te": [_num(v, 4) for v in opt_info.ex_ante_te], "n": [int(v) for v in opt_info.n_holdings],
-                    "turnover": [_num(v, 4) for v in opt_info.turnover], "relax": [_num(v, 2) for v in opt_info.relax]},
+                    "turnover": [_num(v, 4) for v in opt_info.planned_turnover], "relax": [_num(v, 2) for v in opt_info.relax]},
         "ic": {"dates": [d.strftime("%Y-%m-%d") for d in ic.index], "values": [_num(v, 4) for v in ic.values]},
         "yearly": [{"year": int(y), "strat": _num(row["策略"]), "bench": _num(row["基准"]), "excess": _num(row["超额"])}
                    for y, row in yearly.iterrows()],
@@ -135,11 +135,12 @@ def build_html_report(*, res: dict, main: str, top_name: str, bench: pd.Series, 
         "oos_industry": [{"name": i, "value": _num(v)} for i, v in
                          pd.concat([oos_br.total.head(6), oos_br.total.tail(6)]).items()],
         "latest": {
-            "date": str(snap["date"]), "n_ranked": snap["n_ranked"], "turnover": _num(info.turnover, 4),
+            "date": str(snap["date"]), "n_ranked": snap["n_ranked"], "turnover": _num(info.planned_turnover, 4), "cash_at_signal": _num(snap["cash_at_signal"], 4),
             "te": _num(info.ex_ante_te, 4), "relax": _num(info.relax, 2),
             "holdings": [{"code": row.code, "name": row.name, "industry": row.industry, "w": _num(row.weight),
                           "b": _num(row.bench_weight), "a": _num(row.active_weight), "chg": _num(row.change),
-                          "new": bool(row.is_new), "rank": int(row.model_rank)} for row in cur.itertuples()],
+                          "new": bool(row.is_new), "rank": int(row.model_rank) if pd.notna(row.model_rank) else None,
+                          "w0": _num(row.weight_at_signal)} for row in cur.itertuples()],
             "sold": [{"code": c, "name": allnames.get(c, c)} for c in snap["sold"]],
             "bench_top": [{"code": c, "name": allnames.get(c, c), "b": _num(v), "w": _num(wmap.get(c, 0.0))}
                           for c, v in top_b.items()],

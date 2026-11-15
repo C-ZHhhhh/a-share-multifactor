@@ -1,6 +1,6 @@
 """Performance attribution.
 
-1. Brinson-Hood-Beebower industry attribution per holding period:
+1. Brinson-Hood-Beebower industry attribution per holding period (cash is a sector with zero return):
    allocation  = (wp_s - wb_s) * (rb_s - Rb)
    selection   = wb_s * (rp_s - rb_s)
    interaction = (wp_s - wb_s) * (rp_s - rb_s)
@@ -35,6 +35,9 @@ def brinson(holdings: dict, signal_of_exec: dict, data: pd.DataFrame, daily_ret:
         df = pd.DataFrame({"wp": wp, "wb": wb}).fillna(0)
         df["r"] = r.reindex(df.index).fillna(0)
         df["ind"] = ind.reindex(df.index).fillna("未分类")
+        # cash is its own "sector" (return 0, no benchmark weight), so that portfolio weights sum to 1 and
+        # allocation + selection + interaction = Rp - Rb holds exactly even when part of the book is cash
+        df.loc["CASH"] = {"wp": max(0.0, 1.0 - df.wp.sum()), "wb": 0.0, "r": 0.0, "ind": "现金"}
         Rb = (df.wb * df.r).sum()
         for s, g in df.groupby("ind"):
             wps, wbs = g.wp.sum(), g.wb.sum()

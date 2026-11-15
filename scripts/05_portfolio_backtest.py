@@ -43,6 +43,11 @@ if __name__ == "__main__":
     is_score = scores[best][scores.index.get_level_values(0) <= S["is_end"]]
     lam_best, calib = calibrate_lambda(is_score, data, fret, resid, mkt, bench, CFG["portfolio"], S["is_end"])
     print(calib.round(3)); print(f"λ = {lam_best:g} (target ex-ante TE {CFG['portfolio']['target_te']:.1%})")
+    from mf.forward import load_frozen
+    frozen = load_frozen()
+    if frozen and float(frozen["lambda"]) != lam_best:   # rules are frozen
+        print(f"WARNING: calibration now gives λ = {lam_best:g}, frozen λ = {frozen['lambda']:g}; using the frozen one")
+        lam_best = float(frozen["lambda"])
     pcfg = {**CFG["portfolio"], "risk_aversion": lam_best}
 
     # ---- final portfolios over the whole walk-forward window

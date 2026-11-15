@@ -8,6 +8,7 @@ import pandas as pd
 import pytest
 
 from mf import models
+from mf.config import CFG
 from mf.backtest import Market, run_backtest
 from mf.factors import mad_winsorize, neutralize, rebalance_dates
 
@@ -50,7 +51,10 @@ def test_backtest_costs_and_returns():
     no_cost = run_backtest(tgt, mkt, cost_on=False)
     assert no_cost["nav"].iloc[-1] == pytest.approx(1.01 ** 4)        # 4 days held after exec
     assert with_cost["nav"].iloc[-1] < no_cost["nav"].iloc[-1]
-    assert with_cost["turnover"].iloc[0] == pytest.approx(0.5)
+    # initial build from cash: buys are scaled so that buys + commission + slippage use exactly all the cash
+    cb = CFG["costs"]["commission"] + CFG["costs"]["slippage"]
+    assert with_cost["turnover"].iloc[0] == pytest.approx(0.5 / (1 + cb))
+    assert with_cost["cash"].iloc[0] == pytest.approx(0.0, abs=1e-12)
 
 
 def test_backtest_blocks_limit_up_buys():
