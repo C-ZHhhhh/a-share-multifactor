@@ -87,11 +87,14 @@ if __name__ == "__main__":
     # ---------------- attribution
     data = load_dataset()
     long = load_long()
-    daily_ret = to_wide(long, "ret").fillna(0)
+    daily_all = to_wide(long, "ret").fillna(0)
     fret = pd.read_parquet(PROC / "factor_returns.parquet")
-    hold = res[main]["holdings"]
-    dates = daily_ret.index
-    sig_of = {d: dates[dates.searchsorted(d) - 1] for d in hold}
+    dates = daily_all.index
+    sig_of_all = {d: dates[dates.searchsorted(d) - 1] for d in res[main]["holdings"]}
+    # historical attribution only: executions and daily returns up to the history end (forward is separate)
+    daily_ret = daily_all.loc[:H]
+    hold = {e: w for e, w in res[main]["holdings"].items() if e <= H}
+    sig_of = {e: sig_of_all[e] for e in hold}
     br = brinson(hold, sig_of, data, daily_ret)
     active = (r - b)
     fa = factor_attribution(hold, sig_of, data, fret, active, res[main]["cost"])
@@ -143,7 +146,7 @@ if __name__ == "__main__":
     n = CFG["portfolio"]["topn"]
     top_name = f"Top{n}等权({best})"
     tables = write_holdings({main: (res[main], scores[best]), top_name: (res[top_name], scores[best])},
-                            data, opt_info, main, daily_ret.index)
+                            data, opt_info, main, daily_all.index)
     exec_sum = execution_summary(tables[main])
 
     # ---------------- execution & constraint audit (Q07): actual post-trade book vs limits, with reasons

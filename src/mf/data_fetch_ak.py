@@ -308,6 +308,20 @@ def refresh_all(cfg: Optional[dict] = None, raw_dir: Optional[Path] = None, end:
 
     codes = sorted(uni.code.unique())
     active = set(uni[uni.month == uni.month.max()].code)
+    # Codes the source has never served (recorded as 'nodata' by an earlier download and with no cached
+    # file) are a known data limitation, not a fresh failure: they are still re-tried, but an empty answer
+    # for them is logged instead of aborting the refresh.
+    fails = raw_dir / "fetch_failures_sina.csv"
+    known_unavailable = set()
+    if fails.exists():
+        f = pd.read_csv(fails, header=None, names=["code", "msg"], dtype=str)
+        known_unavailable = {c for c, m in zip(f.code, f.msg.fillna(""))
+                             if "nodata" in m and not (raw_dir / "sina" / f"{c}.parquet").exists()}
+    if known_unavailable & active:
+        print(f"sina: {len(known_unavailable & active)} active codes never served by the source "
+              f"(known limitation, not fatal): {sorted(known_unavailable & active)}", flush=True)
+    ctx.log["sina_known_unavailable"] = sorted(known_unavailable)
+    active = active - known_unavailable
     print(f"universe: {len(codes)} unique stocks over {uni.month.nunique()} months", flush=True)
     with ThreadPoolExecutor(1) as pool:                 # reports run in parallel with the bars
         rep = pool.submit(refresh_reports, ctx, ak_source, prev_manifest) \
