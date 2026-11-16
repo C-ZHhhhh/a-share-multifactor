@@ -19,6 +19,9 @@ from mf.risk import estimate_factor_returns
 
 if __name__ == "__main__":
     long = load_long()
+    from mf.checks import validate_long
+    chk = validate_long(long, load_benchmarks().index)
+    print("data checks:", {k: v for k, v in chk.items() if not k.endswith("examples")})
     data = load_dataset()
     scores = pd.read_parquet(PROC / "model_scores.parquet")
     choice = json.load(open(PROC / "model_choice.json"))
@@ -26,13 +29,21 @@ if __name__ == "__main__":
     scores = scores[scores.index.get_level_values(0) >= first_pred]
 
     fpath = PROC / "factor_returns.parquet"
-    # cache is valid only if newer than the dataset it was estimated from
-    if fpath.exists() and fpath.stat().st_mtime > (PROC / "dataset.parquet").stat().st_mtime:
+    # the cache is keyed on the CONTENT of its inputs (dataset + daily panel + risk-model code), not on mtimes
+    import hashlib
+    from mf.config import ROOT
+    h = hashlib.sha256()
+    for f in (PROC / "dataset.parquet", PROC / "daily_long.parquet", ROOT / "src/mf/risk.py"):
+        h.update(f.read_bytes())
+    key = h.hexdigest()[:16]
+    meta = PROC / "factor_returns.key"
+    if fpath.exists() and meta.exists() and meta.read_text().strip() == key:
         fret = pd.read_parquet(fpath)
         resid = pd.read_parquet(PROC / "specific_returns.parquet")
     else:
         print("estimating risk-model factor returns ...")
         fret, resid = estimate_factor_returns(data, long)
+        meta.write_text(key)
 
     mkt = Market.from_long(long)
     B = load_benchmarks()
@@ -44,7 +55,8 @@ if __name__ == "__main__":
     lam_best, calib = calibrate_lambda(is_score, data, fret, resid, mkt, bench, CFG["portfolio"], S["is_end"])
     print(calib.round(3)); print(f"λ = {lam_best:g} (target ex-ante TE {CFG['portfolio']['target_te']:.1%})")
     from mf.forward import load_frozen
-    frozen = load_frozen()
+    import os
+    frozen = None if os.environ.get("MF_IGNORE_FROZEN") else load_frozen()   # set only when preparing a NEW rules version
     if frozen and float(frozen["lambda"]) != lam_best:   # rules are frozen
         print(f"WARNING: calibration now gives λ = {lam_best:g}, frozen λ = {frozen['lambda']:g}; using the frozen one")
         lam_best = float(frozen["lambda"])

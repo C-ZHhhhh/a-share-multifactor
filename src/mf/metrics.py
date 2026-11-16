@@ -18,12 +18,14 @@ def perf(ret: pd.Series, bench: pd.Series | None = None, turnover: pd.Series | N
     nav = (1 + ret).cumprod()
     ann = nav.iloc[-1] ** (252 / n) - 1
     vol = ret.std() * np.sqrt(252)
-    dd = nav / nav.cummax() - 1
+    dd = nav / np.maximum(nav.cummax(), 1.0) - 1          # peak includes the starting NAV of 1
     sharpe = (ret.mean() - rf / 252) * 252 / vol if vol > 0 else np.nan
     out = {"年化收益": ann, "年化波动": vol, "夏普比率": sharpe,
            "最大回撤": dd.min(), "卡玛比率": ann / -dd.min() if dd.min() < 0 else np.nan}
     if bench is not None:
-        b = bench.reindex(ret.index).fillna(0)
+        b = bench.reindex(ret.index)
+        if b.isna().any():                    # a missing benchmark day is an error, not a 0% return
+            raise ValueError(f"benchmark missing on {int(b.isna().sum())} of {len(b)} days, e.g. {b[b.isna()].index[0].date()}")
         bnav = (1 + b).cumprod()
         b_ann = bnav.iloc[-1] ** (252 / n) - 1
         active = ret - b
@@ -34,7 +36,7 @@ def perf(ret: pd.Series, bench: pd.Series | None = None, turnover: pd.Series | N
         mb = (1 + b).groupby(b.index.to_period("M")).prod()
         out.update({"基准年化": b_ann, "超额年化": ex_ann, "跟踪误差": te,
                     "信息比率": active.mean() * 252 / te if te > 0 else np.nan,
-                    "超额最大回撤": (ex_nav / ex_nav.cummax() - 1).min(),
+                    "超额最大回撤": (ex_nav / np.maximum(ex_nav.cummax(), 1.0) - 1).min(),
                     "月度胜率": (mret > mb).mean()})
     if turnover is not None and len(turnover):
         years = n / 252

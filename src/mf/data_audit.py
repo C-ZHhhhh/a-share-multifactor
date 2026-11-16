@@ -123,7 +123,16 @@ def cross_validate(long: pd.DataFrame) -> dict:
     tr = m[(m.tradestatus == 1) & (m.volume_bs > 0) & m.preclose.notna()]   # IPO day: Sina has no preclose
     ret_diff = (tr.ret * 100 - tr.pctChg).abs()
     st_true, st_pred = m.isST_bs == 1, m.isST == 1
+    # split-half stability: the inference parameters were tuned on this whole sample, so this is NOT an
+    # independent holdout; a true holdout needs ST flags for stocks never used in tuning (not available)
+    import zlib
+    half = m.code.map(lambda c: zlib.crc32(c.encode()) % 2)
+    halves = {}
+    for h in (0, 1):
+        t_, p_ = st_true[half == h], st_pred[half == h]
+        halves[h] = (float((t_ & p_).sum() / max(p_.sum(), 1)), float((t_ & p_).sum() / max(t_.sum(), 1)))
     return {
+        "st_half_a": halves[0], "st_half_b": halves[1],
         "xval_stocks": int(m.code.nunique()), "xval_rows": len(m),
         "xval_close_match": float(((m.close - m.close_bs).abs() < 0.006).mean()),
         "xval_ret_match_0.1pp": float((ret_diff < 0.1).mean()),
@@ -165,7 +174,10 @@ def write_report(r: dict):
         f"收盘价一致率 **{pct(r.get('xval_close_match', np.nan))}**, 日收益误差<0.1pp 的比例 **{pct(r.get('xval_ret_match_0.1pp', np.nan))}**, "
         f"收益相关系数 **{r.get('xval_ret_corr', np.nan):.4f}**。",
         f"ST 推断 (近60日收盘/最高/最低触及±5%涨跌停价≥3次, 且无>5.5%波动; 参数在该样本上网格搜索) 对照 baostock 真实 ST 标记: "
-        f"精确率 **{pct(r.get('st_precision', np.nan))}**, 召回率 **{pct(r.get('st_recall', np.nan))}** (真实 ST 占比 {pct(r.get('st_true_ratio', np.nan))})。", "",
+        f"精确率 **{pct(r.get('st_precision', np.nan))}**, 召回率 **{pct(r.get('st_recall', np.nan))}** (真实 ST 占比 {pct(r.get('st_true_ratio', np.nan))})。"
+        f"按股票代码随机分成两半: A 半精确率 / 召回率 {pct(r['st_half_a'][0]) if 'st_half_a' in r else '-'} / {pct(r['st_half_a'][1]) if 'st_half_a' in r else '-'}, "
+        f"B 半 {pct(r['st_half_b'][0]) if 'st_half_b' in r else '-'} / {pct(r['st_half_b'][1]) if 'st_half_b' in r else '-'}。"
+        "注意: 推断参数是在整个样本上网格搜索得到的, 这只是稳定性检查, **不是独立持出样本**; 独立验证需要另一批从未参与调参的股票的真实 ST 记录, 目前没有。", "",
         "## 指数复原检验",
         f"用成分股流通市值加权 (含分红) 收益复原中证800, 对比官方中证800全收益指数 (H00906): 日收益相关系数 **{r['recon_corr_with_csi800']:.4f}**, "
         f"年化跟踪误差 {pct(r['recon_te_annual'])}。 相关系数接近 1 说明收益、市值、成分股数据整体可信; "

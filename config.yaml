@@ -37,6 +37,7 @@ portfolio:
   industry_dev: 0.05           # |w_ind - b_ind| <= 5%
   size_dev: 0.2                # |active size exposure| <= 0.2 std
   turnover_limit: 0.40         # one-way per rebalance
+  turnover_exempt_cash: 0.5   # turnover limit not applied when cash at the signal >= this (initial build); reported
   topn: 50                     # for the simple top-N equal-weight portfolio
 
 costs:

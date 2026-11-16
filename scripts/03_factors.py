@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from mf.config import CFG, PROC, REPORTS
 from mf.dataset import build_dataset, label_window
-from mf.factor_test import (ic_decay, plot_factor_tests, plot_ic_decay, run_factor_tests,
+from mf.factor_test import (factor_corr, ic_decay, plot_factor_tests, plot_ic_decay, run_factor_tests,
                             select_factors, walk_forward_selection)
 from mf.factors import FACTOR_INFO
 from mf.panel import load_long
@@ -25,7 +25,10 @@ if __name__ == "__main__":
     plot_ic_decay(decay, "is")
     # OOS single-factor results: computed for the report only, never used for selection
     oos_tab, oos_extra = run_factor_tests(data, (S["oos_start"], S["oos_end"]))
-    plot_factor_tests(oos_tab, oos_extra, corr, "oos")
+    # OOS correlation matrix computed on OOS data only, for the OOS figure (display only, never used to select)
+    corr_oos = factor_corr(data[label_window(data, S["oos_start"], S["oos_end"])])
+    plot_factor_tests(oos_tab, oos_extra, corr_oos, "oos")
+    corr_oos.to_csv(PROC / "factor_corr_oos.csv")
 
     is_tab.to_csv(PROC / "factor_tests_is.csv")
     oos_tab.to_csv(PROC / "factor_tests_oos.csv")
@@ -37,7 +40,7 @@ if __name__ == "__main__":
     used = wf[(wf != 0).any(axis=1)]
     share = (used != 0).mean().sort_values(ascending=False)
 
-    show = ["类别", "IC均值", "ICIR(年化)", "t值", "IC>0占比", "多空年化", "多空夏普", "单调性", "因子自相关"]
+    show = ["类别", "IC均值", "ICIR(年化)", "t值", "t值(HAC)", "FDR q值", "IC>0占比", "多空年化", "多空夏普", "单调性", "因子自相关"]
     fmt = lambda t: t[show].round(3).to_markdown()
     md = ["# 单因子检验 (Single-Factor Tests)", "",
           "预处理: 行业中位数填充 → MAD(5倍) 去极值 → Z-score → 对证监会行业哑变量 + ln流通市值 回归取残差 (市值因子仅行业中性) → Z-score。",
@@ -47,7 +50,10 @@ if __name__ == "__main__":
           f"之后的信号日标签在 {S['is_end']} 之后才实现, 不进入样本内的任何决策。", "",
           "## 因子定义", "", "| 因子 | 类别 | 定义 |", "|---|---|---|",
           *[f"| {k} | {v[0]} | {v[1]} |" for k, v in FACTOR_INFO.items()], "",
-          f"## 样本内 {S['is_start']} ~ {S['is_end']}", "", fmt(is_tab), "",
+          f"## 样本内 {S['is_start']} ~ {S['is_end']}", "",
+          "t值 是普通 IID t (筛选规则使用, 已冻结); t值(HAC) 用 Newey-West 3 阶滞后校正 IC 的自相关; FDR q值 是对 19 个因子做 "
+          "Benjamini-Hochberg 多重检验校正后的 q 值。两者只用于展示, 说明筛选在多重检验下的可靠程度; 规则开发过程中还比较过多个模型和参数, "
+          "这部分选择偏差无法用 q 值完全校正。", "", fmt(is_tab), "",
           f"**截至样本内终点的入选因子** (|t|≥2, |ICIR|≥0.5, 两两相关<0.6, 按 |ICIR| 贪心): "
           + ", ".join(f"{f}({'+' if signs[f] > 0 else '−'})" for f in chosen), "",
           "**模型实际使用的是滚动选因子**: 每个调仓日用同一规则重新筛选, 只用该日之前已实现的标签 (扩展窗口, 至少 24 个月)。"
@@ -55,7 +61,9 @@ if __name__ == "__main__":
           share.map(lambda v: f"{v:.0%}").rename("被选中月份占比").to_frame().T.to_markdown(), "",
           "![q](figures/quantile_nav_is.png)", "", "![c](figures/cum_ic_is.png)", "",
           "![corr](figures/factor_corr_is.png)", "", "![decay](figures/ic_decay_is.png)", "",
-          f"## 样本外 {S['oos_start']} ~ {S['oos_end']} (仅展示, 未参与筛选)", "", fmt(oos_tab), "",
+          f"## 历史验证期 {S['oos_start']} ~ {S['oos_end']} (仅展示, 未参与筛选; 开发中被反复查看)", "",
+          f"标签成熟的最后一个信号日: {data[label_window(data, S['oos_start'], S['oos_end'])].date.max().date()}。"
+          "相关系数图使用该区间自己的数据。", "", fmt(oos_tab), "",
           "![q](figures/quantile_nav_oos.png)", ""]
     (REPORTS / "factor_tests.md").write_text("\n".join(md), encoding="utf-8")
     print(is_tab[show].round(3).to_string())

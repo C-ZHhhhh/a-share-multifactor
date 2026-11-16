@@ -1,2 +1,2 @@
-signal_date,registered_on,n_holdings,hash,rules_compliant
-2026-10-30,2026-11-15,86,08766499e8e78abf,yes
+signal_date,signal_time,execution_bound,registered_at_utc,rules_version,rules_sha,target_sha,n_holdings,status,note
+2026-10-30,2026-10-30T15:00:00+08:00,2026-11-02T09:30:00+08:00,2026-11-15T22:44:12+00:00,v1,8cef8732e53f68cc,08766499e8e78abf,86,late_registration,"migrated from registry_v1_legacy.csv; registered 2026-11-15, after execution 2026-11-02: history/demo only"

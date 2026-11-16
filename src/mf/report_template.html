@@ -129,6 +129,12 @@ footer { margin-top: 40px; color: var(--text-muted); font-size: 12.5px; }
     <details><summary>已登记的目标仓位</summary><div class="tbl-wrap" id="fwdReg"></div></details>
   </section>
 
+  <section id="limitsSection" style="margin-top:28px">
+    <h2>数据与方法限制</h2>
+    <p class="lead">每次运行自动生成。"未严格通过"的项目意味着相关结论不能当作严格无偏的证据。</p>
+    <div class="card"><div class="tbl-wrap" id="limitsTable"></div></div>
+  </section>
+
   <h2 style="margin:36px 0 0;font-size:19px">历史回测（2018-03 ~ 冻结日，已在开发中反复查看）</h2>
   <p class="lead" style="color:var(--text-secondary);font-size:13.5px;margin:4px 0 0">下面所有结果，包括"样本外"，都在 v1–v5 的修订中被看过多次，只能当作历史回测，不能当作一次性的样本外检验。</p>
 
@@ -156,14 +162,14 @@ footer { margin-top: 40px; color: var(--text-muted); font-size: 12.5px; }
 
   <section>
     <h2>2. 分年度表现</h2>
-    <p class="lead">每根柱子是一年的超额收益（组合相对基准），蓝色跑赢、红色跑输。悬停可看组合和基准各自的收益。</p>
+    <p class="lead">固定全历史区间，不随上方按钮变化。每根柱子是一年的超额收益（组合相对基准），蓝色跑赢、红色跑输。首尾两年不完整：起始年从首次调仓开始，最后一年截至历史结束日。</p>
     <div class="card"><div class="chart" id="yearChart"></div>
       <details><summary>查看数据表</summary><div class="tbl-wrap" id="yearTable"></div></details></div>
   </section>
 
   <section>
     <h2>3. 选股信号：模型打分准不准</h2>
-    <p class="lead">RankIC：每个月末，模型给股票的打分排名和下个月真实收益排名的相关系数。大于 0 说明打分方向对，A 股多因子通常在 0.03–0.08。累计 IC 稳定向上，说明信号持续有效。</p>
+    <p class="lead">固定区间，不随上方按钮变化。RankIC：每个月末，模型给股票的打分排名和下个月真实收益排名的相关系数。大于 0 说明打分方向对，A 股多因子通常在 0.03–0.08。累计 IC 向上表示平均 IC 为正；它不等于可盈利的超额，也不排除多重检验带来的偏差（见因子检验报告的 HAC t 值和 FDR）。</p>
     <div class="tiles" id="icTiles" style="margin-bottom:14px"></div>
     <div class="grid2">
       <div class="card"><h3>每月 RankIC</h3><p class="sub" id="icSub"></p><div class="chart" id="icChart"></div></div>
@@ -174,7 +180,7 @@ footer { margin-top: 40px; color: var(--text-muted); font-size: 12.5px; }
 
   <section>
     <h2>4. 因子筛选</h2>
-    <p class="lead">19 个候选因子逐个检验，t 值的绝对值至少为 2（虚线）才有资格入选，再按 ICIR 从高到低挑选、去掉和已入选因子太像的。图中是截至样本内终点的检验结果；模型实际使用的是<b>滚动选因子</b>：每个月用同一规则、只用当时已实现的标签重新筛选。悬停可看每个因子在滚动筛选中被选中的月份占比。悬停可看每个因子的定义和入选或落选原因。负的 t 值表示因子值越小、未来收益越高，入选后按反方向使用。</p>
+    <p class="lead">固定样本内区间。19 个候选因子逐个检验，t 值的绝对值至少为 2（虚线）才有资格入选，再按 ICIR 从高到低挑选、去掉和已入选因子太像的。图中是截至样本内终点的检验结果；模型实际使用的是<b>滚动选因子</b>：每个月用同一规则、只用当时已实现的标签重新筛选。悬停可看每个因子在滚动筛选中被选中的月份占比。悬停可看每个因子的定义和入选或落选原因。负的 t 值表示因子值越小、未来收益越高，入选后按反方向使用。</p>
     <div class="card"><div class="legend"><span><i class="box" style="background:var(--series-1)"></i>入选</span><span><i class="box" style="background:var(--neutral)"></i>未入选</span></div><div class="chart" id="factorChart"></div><p class="sub" id="factorNote" style="margin-top:8px"></p></div>
   </section>
 
@@ -192,7 +198,7 @@ footer { margin-top: 40px; color: var(--text-muted); font-size: 12.5px; }
 
   <section>
     <h2>6. 收益从哪里来：归因</h2>
-    <p class="lead">把组合相对基准的超额收益拆开。Brinson 归因按行业拆成"行业配置"和"行业内选股"；因子归因用风险模型拆成各风格因子的贡献，剩下的就是真正的个股选择能力（含交易）。</p>
+    <p class="lead">固定区间（样本内 / 历史验证期分开列出）。把组合相对基准的超额收益拆开。Brinson 归因按行业拆成"行业配置"和"行业内选股"；因子归因用风险模型拆成各风格因子的贡献，剩下的"个股特异"是风险模型解释不了的残差，包含模型没覆盖的风格、现金、交易时点和估计误差，不能直接等同于选股能力。</p>
     <div class="card"><h3>Brinson 行业归因（年化）</h3><p class="sub">行业配置 + 行业内选股 + 交互项 = 合计</p><div class="tbl-wrap" id="brinsonTable"></div></div>
     <div class="card"><h3>归因对账：从 Brinson 到实际超额（年化）</h3><p class="sub">Brinson 解释的是"调仓后权重买入持有一个月"的超额；加上交易成本、调仓日执行时点差、基准口径差，等于实际超额，再加复利口径差等于绩效表里的几何超额</p><div class="tbl-wrap" id="recTable"></div></div>
     <div class="grid2">
@@ -204,7 +210,7 @@ footer { margin-top: 40px; color: var(--text-muted); font-size: 12.5px; }
 
   <section>
     <h2>7. 优化器诊断</h2>
-    <p class="lead">每月调仓时优化器的状态。事前跟踪误差是风险模型预测的组合偏离基准的程度。换手有两个口径：<b>计划换手</b>是目标仓位相对信号日实际持仓（优化器的起点），受 40% 上限约束；<b>实际成交换手</b>是成交后相对执行日交易前的仓位，用于计算成本和绩效。</p>
+    <p class="lead">固定全历史区间。每月调仓时优化器的状态。事前跟踪误差是风险模型预测的组合偏离基准的程度。换手有两个口径：<b>计划换手</b>是目标仓位相对信号日实际持仓（优化器的起点），受 40% 上限约束；<b>实际成交换手</b>是成交后相对执行日交易前的仓位，用于计算成本和绩效。</p>
     <div class="grid3">
       <div class="card"><h3>事前跟踪误差（年化）</h3><div class="chart" id="teChart"></div></div>
       <div class="card"><h3>持仓股票数</h3><div class="chart" id="nChart"></div></div>
@@ -220,10 +226,10 @@ footer { margin-top: 40px; color: var(--text-muted); font-size: 12.5px; }
     <div class="card"><h3>不同方案的样本外信息比率</h3><p class="sub" id="varSub"></p><div class="legend"><span><i class="box" style="background:var(--series-1)"></i>主方案</span><span><i class="box" style="background:var(--neutral)"></i>替代方案</span></div><div class="chart" id="varChart"></div>
       <details><summary>查看完整表格</summary><div class="tbl-wrap" id="varTable"></div></details></div>
     <div class="grid2">
-      <div class="card"><h3>交易成本情景</h3><p class="sub">同一组交易，成本乘以不同倍数后的样本外超额年化</p><div class="tbl-wrap" id="costTable"></div></div>
+      <div class="card"><h3>交易成本情景</h3><p class="sub">相同计划目标，成本乘以不同倍数后的历史验证期超额年化（实际成交随现金和成本略有不同）</p><div class="tbl-wrap" id="costTable"></div></div>
       <div class="card"><h3>Bootstrap：样本外 IR 的分布</h3><p class="sub" id="bootSub"></p><div class="chart" id="bootChart"></div></div>
     </div>
-    <div class="card"><h3>容量：资金规模越大，冲击成本越高</h3><p class="sub">参与率 = 交易金额 ÷ 该股过去 20 日日均成交额；冲击成本按平方根模型估算，是在已有千1滑点之外的额外成本</p><div class="tbl-wrap" id="capTable"></div></div>
+    <div class="card"><h3>容量：资金规模越大，冲击成本越高</h3><p class="sub">参与率 = 交易金额 ÷ 该股过去 20 日日均成交额；冲击成本按平方根模型估算（系数是主观假设），是在已有千1滑点之外的额外成本。参与率超过 100% 的交易不可能一天成交，对应的冲击成本只是示意，容量只能看量级</p><div class="tbl-wrap" id="capTable"></div></div>
     <div class="card"><h3>自定义基准 vs 官方中证800全收益（分年）</h3><p class="sub" id="benchSub"></p><div class="tbl-wrap" id="benchTable"></div></div>
   </section>
 
@@ -474,17 +480,18 @@ const M = D.meta, dates = D.daily.dates;
 let range = "oos";
 function rangeIdx() {
   if (range === "is") return [0, dates.findLastIndex ? dates.findLastIndex(d => d <= M.is_end) : dates.filter(d => d <= M.is_end).length - 1];
-  if (range === "oos") return [dates.findIndex(d => d >= M.oos_start), dates.length - 1];
-  return [0, dates.length - 1];
+  const last = dates.filter(d => d <= M.oos_end).length - 1;   // history never extends past the OOS end
+  if (range === "oos") return [dates.findIndex(d => d >= M.oos_start), last];
+  return [0, last];
 }
 function tile(parent, k, v, s) { const t = h("div", null, "tile"); t.appendChild(h("div", k, "k")); t.appendChild(h("div", v, "v")); if (s) t.appendChild(h("div", s, "s")); parent.appendChild(t); }
 function renderRange() {
   const [i0, i1] = rangeIdx(), st = stats(i0, i1), sl = a => a.slice(i0, i1 + 1), ds = dates.slice(i0, i1 + 1);
-  const label = { all: "全部预测区间", is: "样本内（用于选因子、选模型、调参数）", oos: "样本外（只在最后检验一次）" }[range];
+  const label = { all: "全部历史预测区间", is: "样本内（用于选模型、调参数）", oos: "历史验证期（开发中被反复查看，不是一次性样本外）" }[range];
   $("rangeDesc").textContent = `${label}：${ds[0]} ~ ${ds[ds.length - 1]}，约 ${st.years.toFixed(1)} 年`;
   const T = $("tiles"); T.replaceChildren();
   tile(T, "超额年化收益", spct(st.exann), "组合相对基准，已扣成本");
-  tile(T, "信息比率 IR", num(st.ir), `t 值约 ${num(st.ir * Math.sqrt(st.years), 1)}（≥2 才算显著）`);
+  tile(T, "信息比率 IR", num(st.ir), "不作显著性检验；稳健区间见第 8 节 Bootstrap");
   tile(T, "跟踪误差", pct(st.te), "超额收益的年化波动");
   tile(T, "超额最大回撤", pct(st.emdd));
   tile(T, "组合年化收益", pct(st.ann), `最大回撤 ${pct(st.mdd)}`);
@@ -511,7 +518,8 @@ document.querySelectorAll("#range button").forEach(btn => btn.addEventListener("
 
 function renderStatic() {
   // yearly
-  columns($("yearChart"), { items: D.yearly.map(y => ({ name: y.year + " 年", xlabel: String(y.year), value: y.excess,
+  const yN = D.yearly.length;
+  columns($("yearChart"), { items: D.yearly.map((y, i) => ({ name: y.year + " 年" + (i === 0 ? "（不完整：从首次调仓起）" : i === yN - 1 ? "（不完整：截至 " + M.oos_end.slice(0, 7) + "）" : ""), xlabel: String(y.year) + (i === 0 || i === yN - 1 ? "*" : ""), value: y.excess,
     tip: [{ name: "超额", value: spct(y.excess) }, { name: "组合", value: spct(y.strat) }, { name: "基准", value: spct(y.bench) }] })) });
   table($("yearTable"), { columns: ["年份", "组合", "基准", "超额"], rows: D.yearly.map(y => ({ cells: [y.year, spct(y.strat), spct(y.bench), spct(y.excess)] })) });
   // IC
@@ -600,8 +608,9 @@ function renderStatic() {
     const tot = cnt.reduce((a, b) => a + b, 0);
     columns($("bootChart"), { items: cnt.map((c, i) => { const mid = (edges[i] + edges[i + 1]) / 2; return { name: `IR ${num(edges[i])} ~ ${num(edges[i + 1])}`, value: c / tot, label: false,
         sign: mid, xlabel: i % 8 === 0 ? num(mid, 1) : null, tip: [{ name: "占比", value: pct(c / tot, 1) }] }; }), fmt: v => pct(v, 0), height: 220, colorBy: it => it.sign >= 0 ? css("--pos") : css("--neg") });
-    table($("capTable"), { columns: ["资金规模（亿元）", "参与率中位数（按笔）", "参与率 95 分位", "参与率 >10% 的交易", "冲击成本（年化）", "扣冲击后超额（近似）"],
-      rows: RB.capacity.map(c => ({ cells: [c["规模(亿元)"], pct(c["参与率中位数(按笔)"], 2), pct(c["参与率95分位"], 1), pct(c["参与率>10%的交易占比"], 1), pct(c["冲击成本(年化)"]), spct(c["扣冲击后超额(近似)"])] })) });
+    table($("capTable"), { columns: ["资金规模（亿元）", "参与率 95 分位", "参与率 >100% 的交易金额", "冲击成本（系数 0.5 / 1 / 2）", "扣冲击后超额（系数 1，近似）", "一日内按假设成交"],
+      rows: RB.capacity.map(c => ({ cells: [c["规模(亿元)"], pct(c["参与率95分位"], 1), pct(c["参与率>100%的交易金额占比"] ?? 0, 1),
+        `${pct(c["冲击成本(年化, 系数0.5)"] ?? 0)} / ${pct(c["冲击成本(年化)"])} / ${pct(c["冲击成本(年化, 系数2)"] ?? 0)}`, spct(c["扣冲击后超额(近似)"]), c["一日内按假设成交"] ?? "-"] })) });
     $("benchSub").textContent = `数据覆盖：每月平均有 ${pct(RB.coverage.mean, 1)} 的中证800成分股有行情数据（最低 ${pct(RB.coverage.min, 1)}），缺的主要是后来退市的股票`;
     table($("benchTable"), { columns: ["年份", "自定义基准", "官方中证800全收益", "差异"], rows: RB.bench_years.map(y => ({ cells: [y.year, spct(y["自定义基准"]), spct(y["官方中证800全收益"]), spct(y["差异"])] })) });
   }
@@ -618,22 +627,31 @@ function renderStatic() {
 function renderForward() {
   const F = D.forward;
   if (!F) { $("fwdLead").textContent = "规则尚未冻结。"; return; }
-  $("fwdLead").textContent = `规则冻结于 ${F.frozen_on}（代码版本 ${F.frozen_commit}）。开发时看过的最后一个数据日是 ${F.history_end}，只有此后的收益算前瞻样本；每期目标仓位在第一次生成时登记，之后不可修改。` +
-    (F.days ? "" : " 目前还没有冻结之后的数据，更新数据后这里会出现第一批前瞻结果。");
+  $("fwdLead").textContent = `当前规则版本 ${F.rules_version}，冻结于 ${F.frozen_at_utc || "-"}（UTC）。开发中看过的最后一个数据日是 ${F.history_end}。只有"执行前已登记、登记时规则已冻结、有早于执行的 git 提交时间、实际交易与登记一致"的交易日才计入严格前瞻；0 个严格前瞻日时不显示任何绩效。`;
   const T = $("fwdTiles"); T.replaceChildren();
-  tile(T, "前瞻结果是否有效", F.valid ? "有效" : "无效", F.rules_compliant ? (F.targets_match_registry ? "规则和目标都与登记一致" : "目标与登记不一致：" + F.mismatch.join("、")) : "规则已偏离冻结版本：" + F.rule_diff.join("、"));
-  tile(T, "前瞻交易日", String(F.days), F.days ? `${F.start} ~ ${F.end}` : "尚无数据");
-  if (F.days) {
+  tile(T, "前瞻绩效", F.performance_status, `严格前瞻 ${F.strict_days} 天 / 历史结束后 ${F.days_after_history} 天`);
+  tile(T, "规则与冻结版本一致", F.rules_compliant ? "是" : "否", F.rules_compliant ? `版本 ${F.rules_version}` : F.rule_diff.join("、"));
+  tile(T, "登记表完整", F.registry_integrity ? "是" : "否", F.registry_integrity ? "交易的目标与登记哈希一致" : F.mismatch.join("、"));
+  tile(T, "数据覆盖检查", F.data_ok ? "通过" : "未通过", "");
+  if (F.strict_days) {
     tile(T, "累计超额", spct(F.cum_excess), `组合 ${spct(F.cum_return)}，基准 ${spct(F.bench_cum_return)}`);
-    tile(T, "年化 IR", F.ir == null ? "-" : num(F.ir), F.ir == null ? "不足 60 个交易日" : "");
+
     $("fwdChartCard").style.display = "";
     let s = 1, b = 1; const ex = F.strat.map((r, i) => (s *= 1 + r, b *= 1 + F.bench[i], s / b));
     lineChart($("fwdChart"), { dates: F.dates, series: [{ name: "超额净值", color: css("--series-1"), values: ex }], baseline: 1, height: 200 });
   }
-  tile(T, "已登记目标", String(F.registered.length) + " 期", F.registered.length ? "最早 " + F.registered[0].signal_date : "");
-  table($("fwdReg"), { columns: ["信号日", "登记日期", "持仓数", "哈希", "符合冻结规则"], rows: F.registered.map(r => ({ cells: [r.signal_date, r.registered_on, r.n_holdings, r.hash, r.rules_compliant] })) });
+  tile(T, "已登记目标", String(F.registered.length) + " 期", "其中事前有效 " + F.registered.filter(r => r.status === "valid_preregistered").length + " 期");
+  table($("fwdReg"), { columns: ["信号日", "执行时间下限", "登记时间 (UTC)", "规则版本", "持仓数", "哈希", "状态"], align: ["l", "l", "l", "l", "r", "l", "l"],
+    rows: F.registered.map(r => ({ cells: [r.signal_date, r.execution_bound, r.registered_at_utc, r.rules_version, r.n_holdings, r.target_sha, r.status === "valid_preregistered" ? "事前有效" : "登记晚于执行（仅历史/演示）"] })) });
 }
-function renderAll() { renderForward(); renderRange(); renderStatic(); }
+function renderLimits() {
+  if (!D.limits) { $("limitsSection").style.display = "none"; return; }
+  const lab = { pass: "通过", not_strict: "未严格通过", limited: "有局限" };
+  table($("limitsTable"), { columns: ["项目", "状态", "说明"], align: ["l", "l", "l"],
+    rows: D.limits.map(x => ({ cells: [x.item, lab[x.status], x.detail] })) });
+  document.querySelectorAll("#limitsTable td:nth-child(3)").forEach(td => { td.style.whiteSpace = "normal"; td.style.minWidth = "260px"; });
+}
+function renderAll() { renderForward(); renderLimits(); renderRange(); renderStatic(); }
 renderAll();
 let rt; window.addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(renderAll, 150); });
 if (window.matchMedia) window.matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", renderAll);
