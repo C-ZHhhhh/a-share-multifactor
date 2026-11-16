@@ -3,3 +3,4 @@ signal_date,signal_time,execution_bound,registered_at_utc,rules_version,rules_sh
 2026-10-30,2026-10-30T15:00:00+08:00,2026-11-02T09:30:00+08:00,2026-11-16T00:31:00+00:00,v2,f39ea80dc3880a4b,0fe174db8170eb73,101,late_registration,registered after the execution bound
 2026-10-30,2026-10-30T15:00:00+08:00,2026-11-02T09:30:00+08:00,2026-11-16T02:43:42+00:00,v3,5e3aae6558bfdbed,0fe174db8170eb73,101,late_registration,registered after the execution bound
 2026-11-11,2026-11-11T15:00:00+08:00,2026-11-12T09:30:00+08:00,2026-11-16T02:43:42+00:00,v3,5e3aae6558bfdbed,f32a1acdc1ab6c9d,103,late_registration,registered after the execution bound
+2026-10-30,2026-10-30T15:00:00+08:00,2026-11-02T09:30:00+08:00,2026-11-16T02:52:42+00:00,v4,5371c7310b6807ff,0fe174db8170eb73,101,late_registration,registered after the execution bound
