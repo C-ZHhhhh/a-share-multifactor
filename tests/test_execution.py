@@ -342,3 +342,13 @@ def test_risk_model_inputs_are_finite_psd_and_new_factors_not_riskless():
     assert np.isfinite(F.values).all() and np.linalg.eigvalsh(F.values).min() >= -1e-12
     assert F.loc["NEW", "NEW"] > 0                                           # not treated as riskless
     assert (D > 0).all()
+
+
+def test_mid_month_data_end_is_not_a_rebalance_date():
+    from mf.factors import rebalance_dates
+    d = pd.bdate_range("2026-09-01", "2026-11-11")
+    assert rebalance_dates(d, "2026-11-11")[-1] == pd.Timestamp("2026-10-30")   # November incomplete
+    d2 = pd.bdate_range("2026-09-01", "2026-11-30")
+    assert rebalance_dates(d2, "2026-11-30")[-1] == pd.Timestamp("2026-11-30")
+    d3 = pd.bdate_range("2026-09-01", "2026-11-27")                             # holiday-shortened end
+    assert rebalance_dates(d3, "2026-11-30")[-1] == pd.Timestamp("2026-11-27")

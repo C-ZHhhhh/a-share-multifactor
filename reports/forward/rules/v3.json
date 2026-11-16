@@ -1,0 +1,73 @@
+{
+  "version": "v3",
+  "supersedes": "v2",
+  "reason": "Post-freeze bug fixes found by the November refresh (step 6 attributed a forward execution as history; refresh aborted on a code the source never served). No change to model, lambda, factor rule, constraints or costs.",
+  "frozen_at_utc": "2026-11-16T02:43:30+00:00",
+  "git_sha": "0f456427b88127b83cea6f2ffd5e4b028a702d1b",
+  "python": "3.9.6",
+  "env_sha256": "07dc690861975a23",
+  "data_content_sha256": "da2b11d225e24ec3db76696d54552e4e0c9ec37dda0793107ea950c5437b47dc",
+  "history_end": "2026-10-30",
+  "historical_metrics_at_freeze": {
+    "oos_window": [
+      "2022-01-01",
+      "2026-10-31"
+    ],
+    "oos_excess_ann": 0.0166261141033599,
+    "oos_ir": 0.31752729068164176,
+    "oos_te": 0.047966676875984424,
+    "data_coverage_problems_at_freeze": []
+  },
+  "model": "Ridge",
+  "lambda": 7.0,
+  "portfolio": {
+    "target_te": 0.04,
+    "lambda_grid": [
+      1,
+      2,
+      3,
+      5,
+      7,
+      10,
+      20,
+      50
+    ],
+    "max_active_weight": 0.03,
+    "industry_dev": 0.05,
+    "size_dev": 0.2,
+    "turnover_limit": 0.4,
+    "turnover_exempt_cash": 0.5,
+    "topn": 50
+  },
+  "costs": {
+    "commission": 0.00025,
+    "stamp_before_2023_08_28": 0.001,
+    "stamp_after_2023_08_28": 0.0005,
+    "slippage": 0.001
+  },
+  "split": {
+    "is_start": "2016-01-01",
+    "is_end": "2021-12-31",
+    "oos_start": "2022-01-01",
+    "oos_end": "2026-10-31"
+  },
+  "filters": {
+    "min_list_days": 250,
+    "exclude_st": true,
+    "exclude_suspended": true,
+    "exclude_limit_up_on_signal": true
+  },
+  "risk_free": 0.015,
+  "factor_rule": {
+    "t_min": 2.0,
+    "icir_min": 0.5,
+    "corr_max": 0.6,
+    "min_months": 24,
+    "walk_forward": true
+  },
+  "model_params": {
+    "min_train_months": 24,
+    "label_horizon": 1
+  },
+  "code_sha256": "36ede7093a9b1e58"
+}
