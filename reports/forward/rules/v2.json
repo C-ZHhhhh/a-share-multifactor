@@ -1,0 +1,76 @@
+{
+  "version": "v2",
+  "supersedes": "v1",
+  "reason": "v6 acceptance fixes change code, benchmark and risk model; v1 code fingerprint no longer matches. Same rules (Ridge, lambda by 4% ex-ante TE target -> 7).",
+  "frozen_at_utc": "2026-11-16T00:30:38+00:00",
+  "git_sha": "62d2ccddcdf9dd711783d61df8f37ec6f78cba6a",
+  "python": "3.9.6",
+  "env_sha256": "07dc690861975a23",
+  "data_content_sha256": "301ce15dd345175c8390506a5ddd846811201afe5b550ea42981d0ddc298299d",
+  "history_end": "2026-10-30",
+  "historical_metrics_at_freeze": {
+    "oos_window": [
+      "2022-01-01",
+      "2026-10-31"
+    ],
+    "oos_excess_ann": 0.01662611410330106,
+    "oos_ir": 0.31752729068048297,
+    "oos_te": 0.047966676875987775,
+    "data_coverage_problems_at_freeze": [
+      "sina: 1 files of non-delisted, not-known-inactive stocks end before 2026-10-30: sh.601326(2026-10-20)",
+      "daily: 8 files of non-delisted, not-known-inactive stocks end before 2026-10-30: sh.600562(2023-03-23), sz.000088(2023-03-23), sz.000919(2023-03-23), sz.001872(2023-03-23), sz.002304(2023-03-23), sz.002310(2023-03-23), sz.002456(2023-03-23), sz.002458(2023-03-23)"
+    ]
+  },
+  "model": "Ridge",
+  "lambda": 7.0,
+  "portfolio": {
+    "target_te": 0.04,
+    "lambda_grid": [
+      1,
+      2,
+      3,
+      5,
+      7,
+      10,
+      20,
+      50
+    ],
+    "max_active_weight": 0.03,
+    "industry_dev": 0.05,
+    "size_dev": 0.2,
+    "turnover_limit": 0.4,
+    "turnover_exempt_cash": 0.5,
+    "topn": 50
+  },
+  "costs": {
+    "commission": 0.00025,
+    "stamp_before_2023_08_28": 0.001,
+    "stamp_after_2023_08_28": 0.0005,
+    "slippage": 0.001
+  },
+  "split": {
+    "is_start": "2016-01-01",
+    "is_end": "2021-12-31",
+    "oos_start": "2022-01-01",
+    "oos_end": "2026-10-31"
+  },
+  "filters": {
+    "min_list_days": 250,
+    "exclude_st": true,
+    "exclude_suspended": true,
+    "exclude_limit_up_on_signal": true
+  },
+  "risk_free": 0.015,
+  "factor_rule": {
+    "t_min": 2.0,
+    "icir_min": 0.5,
+    "corr_max": 0.6,
+    "min_months": 24,
+    "walk_forward": true
+  },
+  "model_params": {
+    "min_train_months": 24,
+    "label_horizon": 1
+  },
+  "code_sha256": "e7386f069c33a11a"
+}
