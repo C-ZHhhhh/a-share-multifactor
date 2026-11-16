@@ -33,8 +33,10 @@ if __name__ == "__main__":
     hist = {"oos_window": [S["oos_start"], S["oos_end"]], "oos_excess_ann": p["超额年化"], "oos_ir": p["信息比率"],
             "oos_te": p["跟踪误差"]}
     try:
-        from mf.manifest import content_hash, load_manifest
-        data_hash = content_hash(None) if load_manifest() else None
+        from mf.manifest import check_coverage, content_hash, load_manifest
+        man = load_manifest()
+        data_hash = content_hash("all", man)
+        hist["data_coverage_problems_at_freeze"] = check_coverage(man, CFG["data"]["end"])
     except Exception:
         data_hash = None
     rules = freeze_new_version(model, bt["lam"], hist_end, a.reason, hist, data_hash, a.allow_dirty)
