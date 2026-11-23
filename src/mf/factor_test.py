@@ -65,7 +65,33 @@ def run_factor_tests(data: pd.DataFrame, period: tuple[str, str]) -> tuple[pd.Da
         rows.append(s)
         extra["ic"][f], extra["quant"][f] = ric, qr
     tab = pd.DataFrame(rows).set_index("因子")
+    # display-only robustness of the screen statistic (the frozen selection rule still uses the plain t):
+    # Newey-West (HAC, 3 lags) t of the mean IC, and Benjamini-Hochberg FDR q-values across the 19 factors
+    tab["t值(HAC)"] = [hac_t(extra["ic"][f]) for f in tab.index]
+    tab["FDR q值"] = bh_qvalues(tab["t值(HAC)"])
     return tab, extra
+
+
+def hac_t(ic: pd.Series, lags: int = 3) -> float:
+    import statsmodels.api as sm
+    x = ic.dropna().values
+    if len(x) < 12:
+        return np.nan
+    res = sm.OLS(x, np.ones(len(x))).fit(cov_type="HAC", cov_kwds={"maxlags": lags})
+    return float(res.tvalues[0])
+
+
+def bh_qvalues(t: pd.Series) -> pd.Series:
+    from scipy.stats import norm
+    p = 2 * norm.sf(t.abs().values)
+    n = len(p)
+    order = np.argsort(p)
+    q = np.empty(n)
+    prev = 1.0
+    for rank, i in reversed(list(enumerate(order, start=1))):
+        prev = min(prev, p[i] * n / rank)
+        q[i] = prev
+    return pd.Series(q, index=t.index)
 
 
 def _greedy(stats: pd.DataFrame, corr: pd.DataFrame, t_min: float, icir_min: float, corr_max: float):

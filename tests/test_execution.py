@@ -169,18 +169,186 @@ def test_holdings_table_separates_position_concepts(monkeypatch):
     assert last.loc["CASH", "weight_at_signal"] == pytest.approx(0.5)
 
 
-def test_forward_registry_is_append_only_and_flags_changes(tmp_path, monkeypatch):
+def _fwd(tmp_path, monkeypatch):
     from mf import forward as F
     monkeypatch.setattr(F, "FWD", tmp_path)
     monkeypatch.setattr(F, "REGISTRY", tmp_path / "registry.csv")
-    s0, s1, s2 = pd.Timestamp("2026-09-30"), pd.Timestamp("2026-10-30"), pd.Timestamp("2026-11-30")
+    return F
+
+
+RULES = {"version": "v2", "rules_sha": "x", "history_end": "2026-10-30", "frozen_at_utc": "2026-11-20T00:00:00+00:00"}
+
+
+def test_registration_after_execution_is_late_and_backfill_cannot_fix_it(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    F = _fwd(tmp_path, monkeypatch)
+    s0, s1 = pd.Timestamp("2026-10-30"), pd.Timestamp("2026-11-30")
     tg = {s0: pd.Series({"a": 1.0}), s1: pd.Series({"a": 0.5, "b": 0.5})}
-    reg = F.register(tg, "2026-10-30", compliant=True)
-    assert list(reg.signal_date) == ["2026-10-30"]              # first holding period after history_end
-    tg[s2] = pd.Series({"b": 1.0})
-    tg[s1] = pd.Series({"a": 0.6, "b": 0.4})                    # recomputed differently later (data revision)
-    reg = F.register(tg, "2026-10-30", compliant=True)
-    assert list(reg.signal_date) == ["2026-10-30", "2026-11-30"]
-    assert reg.attrs["mismatch"] == ["2026-10-30"]              # original row kept, change flagged
-    reg2 = F.register({**tg, pd.Timestamp("2026-12-31"): pd.Series({"a": 1.0})}, "2026-10-30", compliant=False)
-    assert len(reg2) == 2                                       # nothing registered by a non-compliant run
+    # registered on 2026-11-25: s0 (executes 2026-11-02) is late, s1 (executes 2026-12-01 09:30 CST) is valid
+    reg = F.register(tg, RULES, True, now=datetime(2026, 11, 25, tzinfo=timezone.utc))
+    st = dict(zip(reg.signal_date, reg.status))
+    assert st == {"2026-10-30": "late_registration", "2026-11-30": "valid_preregistered"}
+    # a later run cannot rewrite a row; a changed target is flagged
+    tg[s1] = pd.Series({"a": 0.6, "b": 0.4})
+    reg = F.register(tg, RULES, True, now=datetime(2026, 11, 26, tzinfo=timezone.utc))
+    assert len(reg) == 2 and reg.attrs["mismatch"] == ["2026-11-30"]
+    # rules frozen AFTER the registration -> late even if before execution
+    F2 = _fwd(tmp_path / "b", monkeypatch); (tmp_path / "b").mkdir()
+    reg2 = F2.register({s1: pd.Series({"a": 1.0})}, {**RULES, "history_end": "2026-11-30", "frozen_at_utc": "2026-11-28T00:00:00+00:00"},
+                       True, now=datetime(2026, 11, 27, tzinfo=timezone.utc))
+    assert reg2.status.tolist() == ["late_registration"]
+
+
+def test_strict_forward_days_need_preregistration_hash_and_git_time(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    F = _fwd(tmp_path, monkeypatch)
+    days = pd.bdate_range("2026-10-26", "2026-12-04")
+    ret = pd.Series(0.001, index=days)
+    s0, s1 = pd.Timestamp("2026-10-30"), pd.Timestamp("2026-11-30")
+    tg = {s0: pd.Series({"a": 1.0}), s1: pd.Series({"b": 1.0})}
+    reg = F.register(tg, RULES, True, now=datetime(2026, 11, 25, tzinfo=timezone.utc))
+    early = lambda h: datetime(2026, 11, 25, 1, tzinfo=timezone.utc)
+    sd = F.strict_days(ret, tg, reg, True, True, "2026-10-30", commit_time=early)
+    assert not sd.loc[:"2026-11-30", "strict"].any()                # driven by the late-registered s0
+    assert not sd.loc["2026-12-01", "strict"]                       # execution day still mixes s0 (open->VWAP)
+    assert sd.loc["2026-12-02":, "strict"].all()                    # only s1 now: strict
+    no_git = F.strict_days(ret, tg, reg, True, True, "2026-10-30", commit_time=lambda h: None)
+    assert not no_git.strict.any()                                  # no independent timestamp -> not strict
+    bad_rules = F.strict_days(ret, tg, reg, False, True, "2026-10-30", commit_time=early)
+    assert not bad_rules.strict.any()
+    fs = F.forward_summary(ret.loc[:"2026-10-30"], ret * 0, tg, {**RULES}, reg, [], True, commit_time=early)
+    assert fs["strict_days"] == 0 and fs["performance_status"].startswith("尚未开始")
+
+
+def test_freeze_refuses_dirty_tree(monkeypatch, tmp_path):
+    from mf import forward as F
+    monkeypatch.setattr(F, "_git", lambda *a: " M src/mf/backtest.py" if a[0] == "status" else "")
+    monkeypatch.setattr(F, "RULES_DIR", tmp_path)
+    with pytest.raises(RuntimeError):
+        F.freeze_new_version("Ridge", 5.0, "2026-10-30", "test", {}, None)
+
+
+def test_history_window_is_unchanged_by_later_data():
+    from mf.metrics import perf
+    idx = pd.bdate_range("2022-01-03", "2026-12-31")
+    rng = np.random.default_rng(3)
+    r = pd.Series(rng.normal(0, 0.01, len(idx)), index=idx)
+    b = pd.Series(rng.normal(0, 0.01, len(idx)), index=idx)
+    trunc, full = r.loc[:"2026-10-30"], r
+    a1 = perf(trunc.loc["2022-01-01":"2026-10-31"], b)
+    a2 = perf(full.loc["2022-01-01":"2026-10-31"], b)
+    assert a1 == a2
+
+
+# ---------------------------------------------------------------- benchmark & drawdown
+def test_benchmark_uses_previous_trading_day_cap_on_reentry(tmp_path, monkeypatch):
+    from mf import panel
+    d = pd.bdate_range("2021-01-28", periods=30)              # spans Jan, Feb, Mar
+    rows = []
+    for code, cap0 in [("a", 100.0), ("b", 100.0)]:
+        cap = cap0
+        for x in d:
+            cap = cap * (1.5 if (code == "b" and x.month == 2) else 1.0)   # b's cap jumps while out of the index
+            rows.append({"code": code, "date": x, "ret": 0.01 if code == "a" else 0.02, "float_mcap": cap})
+    long = pd.DataFrame(rows)
+    uni = pd.DataFrame({"month": ["2021-01", "2021-01", "2021-02", "2021-03", "2021-03"],
+                        "code": ["a", "b", "a", "a", "b"]})              # b leaves in Feb, re-enters in Mar
+    (tmp_path / "universe_monthly.csv").write_text(uni.to_csv(index=False))
+    monkeypatch.setattr(panel, "RAW", tmp_path)
+    bench, cov = panel.reconstruct_benchmark(long, return_coverage=True)
+    first_mar = d[d.month == 3][0]
+    prev = d[d < first_mar][-1]
+    capb = long[(long.code == "b") & (long.date == prev)].float_mcap.iloc[0]
+    capa = long[(long.code == "a") & (long.date == prev)].float_mcap.iloc[0]
+    expected = (capa * 0.01 + capb * 0.02) / (capa + capb)     # b weighted by its cap on the previous trading day
+    assert bench[first_mar] == pytest.approx(expected)
+    assert (cov.coverage <= 1).all()
+
+
+def test_max_drawdown_counts_a_loss_on_the_first_day():
+    from mf.metrics import perf
+    r = pd.Series([-0.20, 0.05, 0.05], index=pd.bdate_range("2021-01-04", periods=3))
+    p = perf(r, r * 0)
+    assert p["最大回撤"] == pytest.approx(-0.20)
+    assert p["超额最大回撤"] == pytest.approx(-0.20)
+
+
+# ---------------------------------------------------------------- stale positions, ledger, turnover policy, risk
+def test_permanently_untraded_holding_is_flagged_and_can_be_haircut():
+    idx = pd.bdate_range("2021-01-01", periods=80)
+    ret = pd.DataFrame(0.0, index=idx, columns=["a", "b"])
+    mkt = market(ret)
+    mkt.traded.loc[idx[5]:, "a"] = False                           # 'a' stops trading for good (delisting)
+    mkt.no_sell.loc[idx[5]:, "a"] = True
+    mkt.no_buy.loc[idx[5]:, "a"] = True
+    bt = run_backtest({idx[0]: pd.Series({"a": 0.5, "b": 0.5})}, mkt, cost_on=False, stale_days=20)
+    assert len(bt["stale"]) == 1 and bt["stale"].code.iloc[0] == "a"   # audit exception, logged once
+    assert bt["nav"].iloc[-1] == pytest.approx(1.0)                      # no haircut by default ...
+    hc = run_backtest({idx[0]: pd.Series({"a": 0.5, "b": 0.5})}, mkt, cost_on=False, stale_days=20, stale_haircut=0.5)
+    assert hc["nav"].iloc[-1] == pytest.approx(0.75)                    # ... conservative scenario writes it down
+
+
+def test_every_execution_reconciles_in_the_ledger():
+    idx = pd.bdate_range("2021-01-01", periods=10)
+    rng = np.random.default_rng(7)
+    ret = pd.DataFrame(rng.normal(0, 0.02, (10, 3)), index=idx, columns=list("abc"))
+    nb = ret.astype(bool); nb.loc[idx[4], "c"] = True
+    bt = run_backtest({idx[0]: pd.Series({"a": .4, "b": .3, "c": .3}), idx[3]: pd.Series({"a": .1, "b": .2, "c": .7})},
+                      market(ret, no_buy=nb, r1=ret * 0.3, r2=ret * 0.7))
+    L = bt["ledger"]
+    assert np.allclose(L.nav_pre - L.cost, L.nav_post)
+    assert np.allclose(L.cash_before + L.sells - L.buys - L.cost, L.cash_after)
+    assert (L.cash_after >= -1e-12).all()
+    ident(bt)
+
+
+def _toy_opt():
+    names = pd.Index(["a", "b", "c"])
+    X = pd.DataFrame({"ind1": 1.0, "size": [0.5, 0.0, -0.5], "beta": 0.0, "momentum": 0.0, "volatility": 0.0,
+                      "value": 0.0, "liquidity": 0.0}, index=names)
+    F = pd.DataFrame(np.eye(X.shape[1]) * 1e-4, index=X.columns, columns=X.columns)
+    return names, X, F, pd.Series(1e-3, index=names)
+
+
+def test_turnover_limit_applies_unless_book_is_mostly_cash():
+    names, X, F, D = _toy_opt()
+    pc = {**CFG["portfolio"], "risk_aversion": 0.01, "turnover_limit": 0.1, "size_dev": 10, "industry_dev": 1}
+    alpha = pd.Series([0.05, 0.0, -0.05], index=names)
+    b = pd.Series(1 / 3, index=names)
+    ok = pd.Series(True, index=names)
+    w, info = optimize(alpha, b, X, F, D, None, ok, pc)                       # initial build: exempt
+    assert info["turnover_exempt"]
+    w, info = optimize(alpha, b, X, F, D, pd.Series({"a": .2, "b": .2}), ok, pc)  # 60% cash: exempt, reported
+    assert info["turnover_exempt"] and info["cash_at_signal"] == pytest.approx(0.6)
+    w, info = optimize(alpha, b, X, F, D, pd.Series({"a": .30, "b": .35, "c": .35}), ok, pc)
+    assert not info["turnover_exempt"] and info["relax"] == 1.0
+    assert info["planned_turnover"] <= 0.1 + 1e-4
+
+
+def test_risk_model_inputs_are_finite_psd_and_new_factors_not_riskless():
+    from mf.risk import risk_model_at
+    d = pd.Timestamp("2021-06-30")
+    days = pd.bdate_range("2020-06-01", d)
+    codes = [f"s{i}" for i in range(30)]
+    rng = np.random.default_rng(0)
+    data = pd.DataFrame({"date": d, "code": codes, "industry": ["X"] * 15 + ["NEW"] * 15, "mcap": rng.uniform(1, 5, 30),
+                         **{c: rng.normal(size=30) for c in ["size", "beta_250", "mom_12_1", "vol_20", "bp", "turn_20"]}})
+    cols = ["X", "size", "beta", "momentum", "volatility", "value", "liquidity"]
+    fret = pd.DataFrame(rng.normal(0, 0.01, (len(days), len(cols))), index=days, columns=cols)
+    fret["NEW"] = np.nan
+    fret.loc[days[-10:], "NEW"] = 0.02                                       # only 10 days of history
+    resid = pd.DataFrame(rng.normal(0, 0.02, (len(days), 30)), index=days, columns=codes)
+    X, F, D = risk_model_at(d, data, fret, resid)
+    assert np.isfinite(F.values).all() and np.linalg.eigvalsh(F.values).min() >= -1e-12
+    assert F.loc["NEW", "NEW"] > 0                                           # not treated as riskless
+    assert (D > 0).all()
+
+
+def test_mid_month_data_end_is_not_a_rebalance_date():
+    from mf.factors import rebalance_dates
+    d = pd.bdate_range("2026-09-01", "2026-11-11")
+    assert rebalance_dates(d, "2026-11-11")[-1] == pd.Timestamp("2026-10-30")   # November incomplete
+    d2 = pd.bdate_range("2026-09-01", "2026-11-30")
+    assert rebalance_dates(d2, "2026-11-30")[-1] == pd.Timestamp("2026-11-30")
+    d3 = pd.bdate_range("2026-09-01", "2026-11-27")                             # holiday-shortened end
+    assert rebalance_dates(d3, "2026-11-30")[-1] == pd.Timestamp("2026-11-27")

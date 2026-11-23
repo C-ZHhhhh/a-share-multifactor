@@ -14,6 +14,7 @@ import pandas as pd
 from mf.attribution import active_exposure_series, brinson, constraint_check, factor_attribution, reconcile
 from mf.config import CFG, FIG, PROC, REPORTS
 from mf.dataset import load_dataset
+from mf.facts import limitations, limitations_md
 from mf.holdings import execution_summary, write_holdings
 from mf.html_report import build_html_report
 from mf.metrics import fmt_table, perf, yearly_table
@@ -42,22 +43,25 @@ if __name__ == "__main__":
             p["超额年化(vs官方全收益)"] = perf(r["ret"].loc[a:b], tri)["超额年化"]
             rows[name] = p
         span = r["ret"].loc[a:b].index
-        rows["自定义基准(成分股流通市值加权)"] = perf(bench.reindex(span).fillna(0))
-        rows["中证800全收益(官方)"] = perf(tri.reindex(span).fillna(0))
+        rows["自定义基准(成分股流通市值加权)"] = perf(bench.reindex(span))
+        rows["中证800全收益(官方)"] = perf(tri.reindex(span))
         perf_tabs[pname] = fmt_table(rows)
-    yearly = yearly_table(res[main]["ret"], bench)
+    # HISTORY ends at the configured OOS end; anything later is forward data and is reported separately
+    H = pd.Timestamp(S["oos_end"])
+    yearly = yearly_table(res[main]["ret"].loc[:H], bench)
 
     # ---------------- NAV figure
-    r = res[main]["ret"]
-    b = bench.reindex(r.index).fillna(0)
+    r = res[main]["ret"].loc[:H]
+    b = bench.reindex(r.index)
+    assert b.notna().all(), "benchmark has missing days inside the history window"
     fig, axes = plt.subplots(3, 1, figsize=(12, 10), sharex=True, gridspec_kw={"height_ratios": [3, 2, 1.3]})
     for name, rr in res.items():
         if "无成本" in name:
             continue
         axes[0].plot((1 + rr["ret"]).cumprod(), lw=1.6 if name == main else 1, label=name)
     axes[0].plot((1 + b).cumprod(), color="k", lw=1.4, label="自定义基准 (成分股流通市值加权)")
-    axes[0].plot((1 + tri.reindex(r.index).fillna(0)).cumprod(), color="k", lw=0.8, ls=":", label="中证800全收益 (官方)")
-    axes[0].plot((1 + hs300.reindex(r.index).fillna(0)).cumprod(), color="gray", lw=0.8, ls="--", label="沪深300全收益")
+    axes[0].plot((1 + tri.reindex(r.index)).cumprod(), color="k", lw=0.8, ls=":", label="中证800全收益 (官方)")
+    axes[0].plot((1 + hs300.reindex(r.index)).cumprod(), color="gray", lw=0.8, ls="--", label="沪深300全收益")
     axes[0].set_title("净值曲线 (含交易成本)"); axes[0].legend(fontsize=8, ncol=2)
     ex = (1 + r).cumprod() / (1 + b).cumprod()
     axes[1].plot(ex, color="C3", label=f"{main} 相对基准")
@@ -83,11 +87,14 @@ if __name__ == "__main__":
     # ---------------- attribution
     data = load_dataset()
     long = load_long()
-    daily_ret = to_wide(long, "ret").fillna(0)
+    daily_all = to_wide(long, "ret").fillna(0)
     fret = pd.read_parquet(PROC / "factor_returns.parquet")
-    hold = res[main]["holdings"]
-    dates = daily_ret.index
-    sig_of = {d: dates[dates.searchsorted(d) - 1] for d in hold}
+    dates = daily_all.index
+    sig_of_all = {d: dates[dates.searchsorted(d) - 1] for d in res[main]["holdings"]}
+    # historical attribution only: executions and daily returns up to the history end (forward is separate)
+    daily_ret = daily_all.loc[:H]
+    hold = {e: w for e, w in res[main]["holdings"].items() if e <= H}
+    sig_of = {e: sig_of_all[e] for e in hold}
     br = brinson(hold, sig_of, data, daily_ret)
     active = (r - b)
     fa = factor_attribution(hold, sig_of, data, fret, active, res[main]["cost"])
@@ -139,8 +146,52 @@ if __name__ == "__main__":
     n = CFG["portfolio"]["topn"]
     top_name = f"Top{n}等权({best})"
     tables = write_holdings({main: (res[main], scores[best]), top_name: (res[top_name], scores[best])},
-                            data, opt_info, main, daily_ret.index)
+                            data, opt_info, main, daily_all.index)
     exec_sum = execution_summary(tables[main])
+
+    # ---------------- execution & constraint audit (Q07): actual post-trade book vs limits, with reasons
+    sig_by_exec = {e: s_ for e, s_ in sig_of.items()}
+    es_by_sig = exec_sum.copy(); es_by_sig.index = pd.to_datetime(es_by_sig.index)
+    viol = []
+    for e, row in cons.iterrows():
+        s_ = sig_by_exec[e]
+        reasons = []
+        oi = opt_info.loc[s_] if s_ in opt_info.index else None
+        if oi is not None and oi.relax > 1:
+            reasons.append(f"优化器放宽约束 ×{oi.relax:g}")
+        if oi is not None and bool(oi.get("turnover_exempt", False)):
+            reasons.append("换手豁免 (现金≥50%/首次建仓)")
+        ex = es_by_sig.loc[s_] if s_ in es_by_sig.index else None
+        if ex is not None and ex.n_sell_blocked > 0:
+            reasons.append(f"卖出受阻 {int(ex.n_sell_blocked)} 只")
+        if ex is not None and ex.n_buy_blocked > 0:
+            reasons.append(f"买入受阻 {int(ex.n_buy_blocked)} 只")
+        if row.out_of_universe > 1e-6:
+            reasons.append(f"持有已出股票池 {row.out_of_universe:.2%}")
+        for flag, name, val, lim in [("ok_industry", "行业偏离", row.max_industry_dev, pcfg["industry_dev"]),
+                                     ("ok_size", "市值暴露", row.size_exposure, pcfg["size_dev"]),
+                                     ("ok_cap", "单票超上限", row.max_over_cap, 0.0),
+                                     ("ok_turnover", "实际换手", row.turnover, pcfg["turnover_limit"])]:
+            if not row[flag]:
+                viol.append({"执行日": e.date(), "约束": name, "实际值": f"{val:.4f}", "上限": f"{lim:.4f}",
+                             "可能原因": "; ".join(reasons) or "价格跳空 / 成交后权重漂移 (未在优化器中建模)"})
+    viol_df = pd.DataFrame(viol)
+    oi_hist = opt_info[opt_info.index <= H]
+    exec_audit = {"调仓次数": len(cons.loc[:H]), "优化器放宽约束的月份": int((oi_hist.relax > 1).sum()),
+                  "换手豁免的月份": int(oi_hist.get("turnover_exempt", pd.Series(False)).sum()),
+                  "卖出受阻 (只次)": int(exec_sum.n_sell_blocked.sum()), "买入受阻 (只次)": int(exec_sum.n_buy_blocked.sum()),
+                  "成交后现金 > 0.1% 的月份": int((exec_sum.cash_after > 0.001).sum()),
+                  "长期不可交易持仓 (审计异常)": int(len(res[main]["stale"])),
+                  "账本逐笔对账": "通过" if len(res[main]["ledger"]) else "无记录",
+                  "实际持仓超约束 (月份×约束)": len(viol_df)}
+    act_d = (r - b)
+    te_rows = []
+    for y, g in act_d.groupby(act_d.index.year):
+        ea = oi_hist[oi_hist.index.year == y].ex_ante_te
+        te_rows.append({"年份": y, "事前跟踪误差 (平均)": f"{ea.mean():.2%}" if len(ea) else "-",
+                        "事后跟踪误差": f"{g.std() * np.sqrt(252):.2%}",
+                        "事后 / 事前": f"{g.std() * np.sqrt(252) / ea.mean():.2f}" if len(ea) else "-"})
+    te_df = pd.DataFrame(te_rows)
     print("holdings written to", REPORTS / "holdings")
 
     pct1 = lambda v: f"{v:.2%}"
@@ -156,6 +207,9 @@ if __name__ == "__main__":
 
     md = [
         "# 回测与归因结果 (自动生成)", "",
+        "> 下列结果是**历史回测**: 历史验证期 (2022-01 ~ 2026-10) 在开发中被反复查看, 不是一次性样本外; "
+        "冻结之后的前瞻结果见 [forward/README.md](forward/README.md)。", "",
+        "## 数据与方法限制 (每次运行自动生成)", "", limitations_md(), "",
         f"- 选股模型 (样本内 ICIR 最优): **{best}**; 风险厌恶系数: **λ={bt['lam']:g}** (样本内平均事前跟踪误差最接近目标 {CFG['portfolio']['target_te']:.0%} 的网格值; 不看收益)",
         "- **基准口径**: 本项目是**自定义流通市值基准增强**, 不是官方中证800指数增强。主基准 = 时点中证800成分股按 (前一日) 流通市值加权的全收益, "
         "即优化器跟踪的组合; 官方指数用自由流通市值、分级靠档和权重上限, 历史成分权重无法免费获取。官方中证800全收益 (H00906) 只作副口径, 见 '超额年化(vs官方全收益)' 一列和下方基准对比表。",
@@ -163,7 +217,12 @@ if __name__ == "__main__":
         "信息比率 = 日主动收益均值 × 252 / 跟踪误差 (算术口径); 年化收益与超额为几何口径",
         f"- 预测区间: {first_pred.date()} 起 (前 24 个月仅用于训练); 样本外: {S['oos_start']} ~ {S['oos_end']}",
         "- 成本: 佣金万2.5 双边 + 滑点千1 双边 + 印花税 (2023-08-28 前千1, 之后万5, 仅卖出)", "",
-        "## 模型预测能力", "", model_eval.round(4).to_markdown(index=False), "",
+        "## 模型预测能力", "",
+        "RankIC > 0 不等于可盈利的超额: 同时看 Top10% 月均超额和多空年化 (Ridge 样本外 Top10% 月均超额为负, 多空年化为负)。", "",
+        model_eval.round(4).to_markdown(index=False), "",
+        "理论预测 vs 可成交样本 (次日停牌或一字涨停的股票买不进; 次日信息只用于这项评估, 不进入信号):", "",
+        (pd.read_csv(PROC / "model_eval_exec.csv").round(4).to_markdown(index=False)
+         if (PROC / "model_eval_exec.csv").exists() else "(未生成)"), "",
         "## 风险厌恶系数校准 (仅样本内)", "",
         f"按风险预算选 λ: 在网格 {CFG['portfolio']['lambda_grid']} 中选样本内平均事前跟踪误差最接近 {CFG['portfolio']['target_te']:.0%} 的值。"
         "IR 和超额只作参考, 不参与选择。", "", calib.round(3).to_markdown(), "",
@@ -198,6 +257,13 @@ if __name__ == "__main__":
                            "买入受阻(只次)": int(es.n_buy_blocked.sum()), "买入缩减(只次)": int(es.n_buy_scaled.sum()),
                            "卖出受阻(只次)": int(es.n_sell_blocked.sum())}
                       for pn, es in exec_tabs.items()}).T.to_markdown(), "",
+        "## 执行与约束审计", "",
+        "按实际成交后的持仓 (含现金) 检查约束; 优化器放宽、换手豁免、卖出受阻、剩余现金分别计数。"
+        "事前跟踪误差是风险模型的预测, 不是被严格控制的事后结果; 下表逐年比较两者, 用来监测风险模型偏差。", "",
+        pd.Series(exec_audit).rename("值").to_frame().to_markdown(), "",
+        "实际持仓超约束的明细:" if len(viol_df) else "实际持仓没有超出任何约束。", "",
+        viol_df.to_markdown(index=False) if len(viol_df) else "", "",
+        "事前 vs 事后跟踪误差 (逐年):", "", te_df.to_markdown(index=False), "",
         "## 实际持仓", "",
         "每月组合的完整持仓见 [holdings/](holdings/): 最新一期的可读版本 [latest_portfolio.md](holdings/latest_portfolio.md), "
         "全部历史 `optimized_monthly.csv` (组合优化) 和 `top50_equal_weight_monthly.csv` (Top50 等权对照组)。", "",
@@ -216,16 +282,24 @@ if __name__ == "__main__":
     frozen = load_frozen()
     if frozen:
         diff = rule_diff(frozen, best, bt["lam"])
-        reg = register(res[main]["targets"], frozen["history_end"], compliant=not diff)
-        fwd = forward_summary(res[main]["ret"], bench, frozen["history_end"], reg, diff)
-        fwd.update({"frozen_on": frozen["frozen_on"], "frozen_commit": frozen["commit"]})
+        try:
+            from mf.manifest import check_coverage, load_manifest
+            man = load_manifest()
+            data_ok = bool(man) and not check_coverage(man, CFG["data"]["end"])
+        except Exception as e:                       # no manifest yet: cannot certify the data
+            print("data coverage not certified:", e)
+            data_ok = False
+        reg = register(res[main]["targets"], frozen, compliant=not diff)
+        fwd = forward_summary(res[main]["ret"], bench, res[main]["targets"], frozen, reg, diff, data_ok)
         write_forward_md(fwd)
-        print(f"forward: {fwd['days']} days after {frozen['history_end']}, valid={fwd['valid']}, "
-              f"registered targets={len(reg)}", "rule diff: " + ", ".join(diff) if diff else "")
+        print(f"forward [{frozen['version']}]: {fwd['days_after_history']} days after {frozen['history_end']}, "
+              f"strict {fwd['strict_days']}; {fwd['performance_status']}", "rule diff: " + ", ".join(diff) if diff else "")
     else:
         fwd = None
         print("rules not frozen yet (run scripts/freeze_rules.py once development is finished)")
     payload["forward"] = fwd
+    payload["limits"] = [{"item": a_, "status": b_, "detail": c_} for a_, b_, c_ in limitations()]
+    payload["exec_audit"] = {k: (v if isinstance(v, str) else int(v)) for k, v in exec_audit.items()}
     payload["reconcile"] = {"columns": list(rec_df.columns), "rows": {k: [float(v) for v in row] for k, row in rec_df.iterrows()}}
     payload["constraints"] = {k: {kk: float(vv) for kk, vv in row.items()} for k, row in cons_df.iterrows()}
     payload["execution"] = {"dates": [str(d) for d in exec_sum.index],

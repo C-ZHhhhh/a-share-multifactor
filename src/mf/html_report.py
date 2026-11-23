@@ -81,12 +81,17 @@ def build_html_report(*, res: dict, main: str, top_name: str, bench: pd.Series, 
                       data: pd.DataFrame, br_df: pd.DataFrame, fa_df: pd.DataFrame, oos_br: pd.DataFrame,
                       holdings_main: pd.DataFrame, factor_tests_is: pd.DataFrame, selected: dict) -> dict:
     S = CFG["split"]
-    r = res[main]["ret"]
+    H = pd.Timestamp(S["oos_end"])                 # history ends here; forward data is shown separately
+    r = res[main]["ret"].loc[:H]
     idx = r.index
     series = {"strat": r, "nocost": res[main + " 无成本"]["ret"].reindex(idx), "top": res[top_name]["ret"].reindex(idx),
-              "bench": bench.reindex(idx).fillna(0), "tri": tri.reindex(idx).fillna(0)}
+              "bench": bench.reindex(idx), "tri": tri.reindex(idx)}
+    for k in ("bench", "tri"):                      # never turn a missing benchmark day into a 0% return
+        assert series[k].notna().all(), f"{k} is missing {int(series[k].isna().sum())} days in the history window"
 
     ic = monthly_ic(scores, data)
+    ic = ic[ic.index <= H]
+    opt_hist = opt_info[opt_info.index <= H]
     sel = set(selected["selected"])
     ft = factor_tests_is.set_index("因子")
     corr = pd.read_csv(PROC / "factor_corr_is.csv", index_col=0)
@@ -115,12 +120,13 @@ def build_html_report(*, res: dict, main: str, top_name: str, bench: pd.Series, 
                  "data_start": str(idx[0].date()), "data_end": str(idx[-1].date()),
                  "first_pred": str(first_pred.date()), "is_end": S["is_end"], "oos_start": S["oos_start"],
                  "oos_end": S["oos_end"], "model": best, "lam": _num(lam, 3), "main": main, "top": top_name,
-                 "n_factors": len(sel), "costs": CFG["costs"], "portfolio": CFG["portfolio"]},
+                 "n_factors": len(sel), "costs": CFG["costs"],
+                 "portfolio": {**CFG["portfolio"], "risk_aversion": _num(lam, 3)}},   # the selected lambda, not the config placeholder
         "daily": {"dates": [d.strftime("%Y-%m-%d") for d in idx],
                   **{k: [_num(v) for v in s.values] for k, s in series.items()}},
-        "monthly": {"dates": [d.strftime("%Y-%m-%d") for d in opt_info.index],
-                    "te": [_num(v, 4) for v in opt_info.ex_ante_te], "n": [int(v) for v in opt_info.n_holdings],
-                    "turnover": [_num(v, 4) for v in opt_info.planned_turnover], "relax": [_num(v, 2) for v in opt_info.relax]},
+        "monthly": {"dates": [d.strftime("%Y-%m-%d") for d in opt_hist.index],
+                    "te": [_num(v, 4) for v in opt_hist.ex_ante_te], "n": [int(v) for v in opt_hist.n_holdings],
+                    "turnover": [_num(v, 4) for v in opt_hist.planned_turnover], "relax": [_num(v, 2) for v in opt_hist.relax]},
         "ic": {"dates": [d.strftime("%Y-%m-%d") for d in ic.index], "values": [_num(v, 4) for v in ic.values]},
         "yearly": [{"year": int(y), "strat": _num(row["策略"]), "bench": _num(row["基准"]), "excess": _num(row["超额"])}
                    for y, row in yearly.iterrows()],

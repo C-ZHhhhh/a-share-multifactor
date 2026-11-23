@@ -71,12 +71,37 @@ def ewma_cov(x: pd.DataFrame, halflife: int = 90, window: int = 252) -> pd.DataF
 def risk_model_at(date, data, fret, resid, horizon: int = 21):
     """Returns (X, F, D) scaled to `horizon` trading days, using data strictly up to `date`."""
     X = exposures(data, date)
-    F = ewma_cov(fret.loc[:date], 90) * horizon
-    F = F.reindex(index=X.columns, columns=X.columns).fillna(0.0)
+    hist = fret.loc[:date]
+    F = ewma_cov(hist, 90) * horizon
+    F = F.reindex(index=X.columns, columns=X.columns)
+    # a factor with too little history (e.g. a new industry) must not look riskless: use the median variance
+    # of the other factors of its kind and no covariances
+    n_obs = hist.tail(252).reindex(columns=X.columns).notna().sum().reindex(X.columns).fillna(0)
+    thin = n_obs < 60
+    diag = pd.Series(np.diag(F.fillna(0).values), index=X.columns)
+    style = [c for c in X.columns if c in STYLE]
+    ind = [c for c in X.columns if c not in STYLE]
+    for grp in (style, ind):
+        med = diag[[c for c in grp if not thin[c]]].median() if any(not thin[c] for c in grp) else diag.median()
+        for c in grp:
+            if thin[c] or not np.isfinite(diag[c]) or diag[c] <= 0:
+                F.loc[c, :] = 0.0
+                F.loc[:, c] = 0.0
+                F.loc[c, c] = med
+    F = F.fillna(0.0)
+    Fv = (F.values + F.values.T) / 2
+    ev, evec = np.linalg.eigh(Fv)                       # project onto the PSD cone
+    if ev.min() < 0:
+        Fv = (evec * np.clip(ev, 0, None)) @ evec.T
+    F = pd.DataFrame(Fv, index=X.columns, columns=X.columns)
     u = resid.loc[:date].tail(252)
     w = 0.5 ** (np.arange(len(u))[::-1] / 90)
     spec = ((u ** 2).mul(w, axis=0).sum() / (u.notna().mul(w, axis=0).sum())).reindex(X.index)
-    # shrink specific variance toward the cross-sectional median, floor for sparse histories
-    spec = 0.7 * spec.fillna(spec.median()) + 0.3 * spec.median()
+    # shrink specific variance toward the cross-sectional median; unknown or tiny values are not optimistic:
+    # missing -> median, and a floor at the 10th percentile
+    med = spec.median()
+    spec = 0.7 * spec.fillna(med) + 0.3 * med
+    spec = spec.clip(lower=spec.quantile(0.10))
     D = spec * horizon
+    assert np.isfinite(F.values).all() and np.isfinite(D.values).all(), f"non-finite risk inputs on {date}"
     return X, F, D

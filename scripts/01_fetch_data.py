@@ -1,56 +1,68 @@
-"""Step 1: download data.
+"""Step 1: download / incrementally refresh data, then write data/raw/manifest.json.
 
-* universe / industry / IPO dates / indices : baostock (cached in data/raw)
-* daily bars + adjustment factors          : Sina via AkShare
-* quarterly financial reports              : Eastmoney via AkShare (separate thread)
-* cross-validation sample (192 stocks)     : baostock daily bars incl. true ST flag (audit only)
+* trading calendar / universe / industry / IPO dates / indices : baostock
+* total-return indices (H00906 ...)                            : CSIndex via AkShare
+* daily bars + adjustment factors                              : Sina via AkShare
+* quarterly financial reports                                  : Eastmoney via AkShare (parallel thread)
+* cross-validation sample (192 stocks)                         : baostock daily bars incl. true ST flag (audit only)
 
-Usage: python scripts/01_fetch_data.py [bars|reports|all]
+The refresh is incremental: anything that does not reach `data.end` is re-fetched, the overlap with
+the cache is checked for revisions, and missing/gapped/stale data raises (exit code 1) instead of
+being silently kept. Historical universe months are never rewritten.
+
+Usage: python scripts/01_fetch_data.py [bars|reports|all] [--accept-revisions] [--end YYYY-MM-DD]
 """
+import argparse
 import sys
-import threading
+import traceback
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-import pandas as pd
+from mf import manifest as mf
+from mf.config import CFG, RAW
 
-from mf.config import RAW
+GROUPS_FOR = {
+    "all": None,
+    "bars": ["calendar", "universe", "meta", "index", "tr_index", "sina", "sina_factor"],
+    "reports": ["calendar", "universe", "meta", "index", "tr_index", "reports"],
+}
 
 if __name__ == "__main__":
-    what = sys.argv[1] if len(sys.argv) > 1 else "all"
-    uni_path = RAW / "universe_monthly.csv"
-    if not uni_path.exists():                       # baostock only for metadata
-        from mf.data_fetch import fetch_indices, fetch_universe
-        fetch_universe()
-        fetch_indices()
-    from mf.data_fetch_ak import fetch_daily_sina, fetch_reports, fetch_tr_indices
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("what", nargs="?", default="all", choices=["all", "bars", "reports"])
+    ap.add_argument("--accept-revisions", action="store_true",
+                    help="overwrite cached history even when the source revised it beyond the threshold")
+    ap.add_argument("--end", default=None, help="override data.end from config.yaml")
+    args = ap.parse_args()
+    end = args.end or CFG["data"]["end"]
 
-    fetch_tr_indices()
+    from mf.data_fetch_ak import refresh_all
 
-    # independent baostock bars for a fixed 192-stock sample: used only by the data audit to
-    # cross-validate Sina returns and the inferred ST flag (step 2). The list is versioned so the
-    # audit is reproducible; this is the slowest source per stock, hence a sample, not everything.
-    if what == "all":
-        from mf.data_fetch import fetch_daily
-        xval = (Path(__file__).resolve().parents[1] / "src" / "mf" / "xval_codes.txt").read_text().split()
-        fetch_daily(xval)
+    try:
+        prev = mf.load_manifest(RAW / mf.MANIFEST_NAME)
+    except (FileNotFoundError, ValueError):
+        prev = None
+    try:
+        log = refresh_all(end=end, what=args.what, accept_revisions=args.accept_revisions,
+                          prev_manifest=prev)
+    except Exception as e:
+        traceback.print_exc()
+        m = mf.build_manifest(RAW, refresh={"end": end, "error": f"{type(e).__name__}: {e}"}, end=end)
+        m["complete"] = False
+        mf.write_manifest(m, RAW)
+        print(f"\nREFRESH FAILED ({type(e).__name__}); manifest marked incomplete.\n{e}", file=sys.stderr)
+        sys.exit(1)
 
-    uni = pd.read_csv(uni_path)
-    codes = sorted(uni.code.unique())
-    print(f"universe: {len(codes)} unique stocks over {uni.month.nunique()} months", flush=True)
-
-    rep = {}
-    t = None
-    if what in ("reports", "all"):
-        t = threading.Thread(target=lambda: rep.update(fetch_reports()))
-        t.start()
-    if what in ("bars", "all"):
-        res = fetch_daily_sina(codes)
-        bad = {k: v for k, v in res.items() if not v.startswith(("ok", "cached"))}
-        print(f"bars done. new={sum(v == 'ok' for v in res.values())} not-ok={len(bad)}", flush=True)
-        if bad:
-            pd.Series(bad).to_csv(RAW / "fetch_failures_sina.csv")
-    if t:
-        t.join()
-        print("reports:", pd.Series(rep).str[:4].value_counts().to_dict(), flush=True)
+    m = mf.build_manifest(RAW, refresh=log, end=end)
+    problems = mf.check_coverage(m, end, groups=GROUPS_FOR[args.what])
+    m["problems"] = problems
+    m["complete"] = not problems
+    path = mf.write_manifest(m, RAW)
+    n_rev = sum(len(v) for v in log.get("revisions", {}).values())
+    print(f"manifest -> {path}  content_hash={m['content_hash'][:12]}  revisions logged: {n_rev}  "
+          f"expected last trading day: {log.get('expected_last_trading_day')}")
+    if problems:
+        print("COVERAGE PROBLEMS:\n  " + "\n  ".join(problems), file=sys.stderr)
+        sys.exit(1)
+    print("coverage OK")

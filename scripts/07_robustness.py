@@ -85,7 +85,7 @@ def task(spec: dict) -> dict:
     f = CACHE / f"{spec['name']}.pkl"
     if f.exists() and not spec.get("force"):
         cached = pickle.load(open(f, "rb"))
-        if cached.get("key") == _key(spec) and f.stat().st_mtime > (PROC / "backtests.pkl").stat().st_mtime:
+        if cached.get("key") == _key(spec):          # spec includes the content hash of the main run
             return cached
     if not _W:
         _init()
@@ -178,7 +178,7 @@ def capacity(res_main: dict, long: pd.DataFrame, oos: tuple, aums=(1e8, 5e8, 2e9
     trades = {d: t for d, t in res_main["trades"].items() if a <= d <= b}
     yrs = len(res_main["ret"].loc[a:b]) / 252
     for aum in aums:
-        part, drag, n_big, n_all = [], 0.0, 0, 0
+        part, drag, n_big, n_all, n_over, val_over, val_all = [], {0.5: 0.0, 1.0: 0.0, 2.0: 0.0}, 0, 0, 0, 0.0, 0.0
         for d, t in trades.items():
             s_ = dates[dates.searchsorted(d) - 1]                 # signal date (information set)
             q = t.abs() * aum                                     # t = traded weight (fraction of NAV), AUM = NAV
@@ -186,11 +186,19 @@ def capacity(res_main: dict, long: pd.DataFrame, oos: tuple, aums=(1e8, 5e8, 2e9
             pr = (q / v).replace([np.inf], np.nan)
             part += list(pr.dropna().values)
             n_big += int((pr > 0.10).sum()); n_all += int(pr.notna().sum())
-            imp = y * sig.loc[s_].reindex(t.index).fillna(sig.loc[s_].median()) * np.sqrt(pr.fillna(pr.max()))
-            drag += float((t.abs() * imp).sum())
+            n_over += int((pr > 1.0).sum())
+            val_over += float(t.abs()[pr > 1.0].sum()); val_all += float(t.abs().sum())
+            base = sig.loc[s_].reindex(t.index).fillna(sig.loc[s_].median()) * np.sqrt(pr.fillna(pr.max()))
+            for k in drag:
+                drag[k] += float((t.abs() * k * base).sum())
         part = np.array(part)
-        rows.append({"规模(亿元)": aum / 1e8, "参与率中位数(按笔)": np.median(part), "参与率95分位": np.quantile(part, 0.95),
-                     "参与率>10%的交易占比": n_big / max(n_all, 1), "冲击成本(年化)": drag / yrs})
+        p95 = np.quantile(part, 0.95)
+        rows.append({"规模(亿元)": aum / 1e8, "参与率中位数(按笔)": np.median(part), "参与率95分位": p95,
+                     "参与率>10%的交易占比": n_big / max(n_all, 1),
+                     "参与率>100%的交易金额占比": val_over / max(val_all, 1e-12),
+                     "冲击成本(年化, 系数0.5)": drag[0.5] / yrs, "冲击成本(年化)": drag[1.0] / yrs,
+                     "冲击成本(年化, 系数2)": drag[2.0] / yrs,
+                     "一日内按假设成交": "不可行 (部分交易超过日成交额)" if n_over else ("勉强 (>10%参与率较多)" if n_big / max(n_all, 1) > 0.05 else "可行")})
     return pd.DataFrame(rows)
 
 
@@ -237,8 +245,10 @@ if __name__ == "__main__":
         {"name": "data_drop", "group": "数据", "label": "去掉全部财报因子 (只用量价)", "kind": "data", "mode": "drop"},
         {"name": "data_blank", "group": "数据", "label": "随机丢失 10% 的财报因子值", "kind": "data", "mode": "blank"},
     ]
+    import hashlib
+    main_sha = hashlib.sha256((PROC / "backtests.pkl").read_bytes()).hexdigest()[:16]
     for s in specs:
-        s.update({"base": base, "force": force})
+        s.update({"base": {**base, "main_sha": main_sha}, "force": force})
     with ProcessPoolExecutor(max_workers=4) as ex:
         results = list(ex.map(task, specs))
         for r in results:
@@ -331,7 +341,8 @@ if __name__ == "__main__":
                           for k, v in boot.items()}).T
     capshow = cap.copy()
     for c in capshow.columns[1:]:
-        capshow[c] = capshow[c].map(pct)
+        if c != "一日内按假设成交":
+            capshow[c] = capshow[c].map(pct)
     capshow["规模(亿元)"] = capshow["规模(亿元)"].map(lambda v: f"{v:g}")
     md = [
         "# 稳健性、数据敏感性与容量检验 (自动生成)", "",
@@ -340,17 +351,19 @@ if __name__ == "__main__":
         "- **参数**: λ 换成其他跟踪误差目标 (3%、5%) 或 v2 的'样本内 IR 最高'规则; 模型换成样本内没有选中的两个。",
         "- **约束**: 在原约束上增加风格暴露限制或收紧行业偏离, λ 与模型不变。",
         "- **切分**: 换一个样本内终点, 重新做因子筛选、模型选择和 λ 校准 (同样按目标跟踪误差), 再看新的样本外。",
-        "- **数据**: 财报因子更晚可得、完全去掉、或随机丢失 10%, 重新训练模型后回测, 检验结论是否依赖财报数据质量。", "",
+        "- **数据**: 财报因子更晚可得、完全去掉、或随机丢失 10%, 重新筛因子、训练模型后回测。这是**信号输入敏感性**: 风险模型、基准和行情仍用原始数据, 不是整条流水线的重跑。", "",
         vshow.to_markdown(index=False), "",
-        "## 2. 交易成本情景 (样本外超额年化, 同一组交易)", "",
-        "成本倍数 1 = 佣金万2.5 + 滑点千1 + 印花税; 0 = 无成本。", "", cshow.to_markdown(), "",
+        "## 2. 交易成本情景 (样本外超额年化, 相同计划目标)", "",
+        "成本倍数 1 = 佣金万2.5 + 滑点千1 + 印花税; 0 = 无成本。各情景用相同的计划目标仓位回放; 实际成交随现金和成本略有不同, 所以不是严格'同一组实际交易'。", "", cshow.to_markdown(), "",
         "## 3. 时间序列 Bootstrap (日度主动收益, 循环块长 21 天, 5000 次)", "",
         "块 Bootstrap 保留了收益的自相关和波动聚集。区间包含 0 说明在常用置信水平下不能拒绝 '没有超额'。"
         "'重抽样中主动收益≤0的比例' 是围绕样本均值重抽样得到的分布中 ≤0 的占比, 用来直观衡量不确定性, 严格说不是 p 值。", "",
         bshow.to_markdown(), "",
         "## 4. 容量: 成交额参与率与市场冲击", "",
         "按样本外每次调仓的实际交易, 假设资金规模为 AUM: 参与率 = 交易金额 / 该股过去 20 日日均成交额; "
-        "冲击成本用平方根模型 σ·√(参与率), σ 为过去 20 日日波动率, 系数取 1。这部分是在已有千1滑点之外的额外成本。", "",
+        "冲击成本用平方根模型 系数·σ·√(参与率), σ 为过去 20 日日波动率。系数 1 是主观假设, 同时给出 0.5 和 2 的结果。"
+        "这部分是在已有千1滑点之外的额外成本。**参与率超过 100% 的交易不可能在一天内按假设价格成交**, 此时冲击成本只是示意, "
+        "不代表可实现的净值; 需要分多天成交 (延期、部分成交), 这里没有建模。所以容量结论只是量级, 不是精确阈值。", "",
         capshow.to_markdown(index=False), "",
         "## 5. 基准与数据覆盖", "",
         "### 自定义基准 vs 官方中证800全收益 (分年)", "", bench_y.map(pct).to_markdown(), "",

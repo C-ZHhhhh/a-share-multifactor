@@ -1,7 +1,7 @@
 # ---------- A-share multi-factor project configuration ----------
 data:
   start: "2015-01-01"          # raw data start (one year of look-back before first rebalance)
-  end: "2026-10-31"
+  end: "2026-11-11"
   universe_start: "2016-01-01"
   raw_dir: data/raw
   processed_dir: data/processed
@@ -37,6 +37,7 @@ portfolio:
   industry_dev: 0.05           # |w_ind - b_ind| <= 5%
   size_dev: 0.2                # |active size exposure| <= 0.2 std
   turnover_limit: 0.40         # one-way per rebalance
+  turnover_exempt_cash: 0.5   # turnover limit not applied when cash at the signal >= this (initial build); reported
   topn: 50                     # for the simple top-N equal-weight portfolio
 
 costs:

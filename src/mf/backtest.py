@@ -80,7 +80,8 @@ def stamp_rate(d: pd.Timestamp) -> float:
 
 
 def run_backtest(targets, mkt: Market, start=None, end=None, cost_on: bool = True,
-                 signal_dates=None, cost_mult: float = 1.0) -> dict:
+                 signal_dates=None, cost_mult: float = 1.0, stale_days: int = 60,
+                 stale_haircut: float | None = None) -> dict:
     """Account-based simulation: a vector of position VALUES plus a CASH balance (NAV = sum(values) + cash,
     starting at 1). Four position concepts are kept apart in the output:
 
@@ -94,6 +95,13 @@ def run_backtest(targets, mkt: Market, start=None, end=None, cost_on: bool = Tru
     commission, slippage and stamp duty are paid from cash. If cash would go negative, all buys are scaled
     down by the same factor until it is exactly zero, so the account never borrows. Cash earns 0.
     turnover = 0.5 * (buys + sells) / pre-trade NAV (executed, not planned); cost = costs / pre-trade NAV.
+
+    Stale positions: a held stock that has not traded for `stale_days` consecutive trading days (long
+    suspension, delisting, or no vendor data) is NOT treated as a safe zero-return asset. Every such position
+    is logged in `stale` (audit exception); with `stale_haircut` set (e.g. 0.5) its value is written down once
+    by that fraction when it first becomes stale (conservative scenario).
+    Ledger: every execution appends nav_pre / buys / sells / cost / cash_before / cash_after / nav_post and
+    the identity nav_pre - cost == nav_post is asserted; cash can never be negative.
     """
     c = CFG["costs"]
     dates = mkt.ret.index
@@ -112,6 +120,10 @@ def run_backtest(targets, mkt: Market, start=None, end=None, cost_on: bool = Tru
     days = dates[(dates >= start) & ((dates <= pd.Timestamp(end)) if end else True)]
 
     R, R1, R2 = mkt.ret.values, mkt.r_open_to_vwap.values, mkt.r_vwap_to_close.values
+    TR = mkt.traded.values
+    idle = np.zeros(len(codes), dtype=int)          # consecutive non-traded days per stock
+    flagged = np.zeros(len(codes), dtype=bool)
+    stale_log, ledger = [], []
     NB, NS = mkt.no_buy.values, mkt.no_sell.values
     pos_of = {d: i for i, d in enumerate(dates)}
 
@@ -148,9 +160,14 @@ def run_backtest(targets, mkt: Market, start=None, end=None, cost_on: bool = Tru
                 new = w_pre - sell + buy
                 cash_w = c0 + sell.sum() * (1 - cs) - buy.sum() * (1 + cb)
             cost = cb * buy.sum() + cs * sell.sum()
+            cash_before = C
             V = new * nav0
             C = max(cash_w, 0.0) * nav0
             nav1 = V.sum() + C
+            assert cash_w > -1e-12, f"negative cash on {d}"
+            assert abs(nav0 * (1 - cost) - nav1) < 1e-9 * max(1.0, nav0), f"ledger does not reconcile on {d}"
+            ledger.append({"date": d, "nav_pre": nav0, "buys": buy.sum() * nav0, "sells": sell.sum() * nav0,
+                           "cost": cost * nav0, "cash_before": cash_before, "cash_after": C, "nav_post": nav1})
             turn_log[d], cost_log[d] = 0.5 * (buy.sum() + sell.sum()), cost
             dw = new - w_pre
             trade_log[d] = pd.Series(dw[dw != 0], index=codes[dw != 0])   # traded weight, fraction of pre-trade NAV
@@ -160,6 +177,15 @@ def run_backtest(targets, mkt: Market, start=None, end=None, cost_on: bool = Tru
             V = V * (1 + R2[i])                                  # VWAP -> close on the new book
         else:
             V = V * (1 + R[i])
+        idle = np.where(TR[i], 0, idle + 1)
+        held_stale = (V > 0) & (idle >= stale_days)
+        for k in np.where(held_stale & ~flagged)[0]:
+            w = V[k] / (V.sum() + C)
+            if stale_haircut:
+                V[k] *= (1 - stale_haircut)
+            stale_log.append({"date": d, "code": codes[k], "weight": w, "days_not_traded": int(idle[k]),
+                              "haircut": stale_haircut or 0.0})
+        flagged = np.where(V > 0, flagged | held_stale, False)
         navs.append(V.sum() + C)
         if d in sig_set:                 # close of a signal date: record actual weights, decide next targets
             sig_log[d] = cur()
@@ -169,4 +195,6 @@ def run_backtest(targets, mkt: Market, start=None, end=None, cost_on: bool = Tru
     return {"nav": nav_s, "ret": nav_s.pct_change().fillna(nav_s.iloc[0] - 1),
             "turnover": pd.Series(turn_log, dtype=float), "cost": pd.Series(cost_log, dtype=float),
             "holdings": hold_log, "cash": pd.Series(cash_log, dtype=float), "trades": trade_log,
-            "pre_trade": pre_log, "targets": targets, "at_signal": sig_log}
+            "pre_trade": pre_log, "targets": targets, "at_signal": sig_log,
+            "stale": pd.DataFrame(stale_log, columns=["date", "code", "weight", "days_not_traded", "haircut"]),
+            "ledger": pd.DataFrame(ledger).set_index("date") if ledger else pd.DataFrame()}

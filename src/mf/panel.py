@@ -229,21 +229,34 @@ def load_long() -> pd.DataFrame:
 
 
 # ------------------------------------------------------------------ benchmarks
-def reconstruct_benchmark(long: pd.DataFrame) -> pd.Series:
-    """Daily total return of the point-in-time CSI800 members weighted by previous-day float
-    market cap. This is exactly the benchmark the optimiser tracks (bench_weights uses the same
-    float-mcap weights), so the strategy's alpha is measured against it. The official index uses
-    free-float caps (strategic holdings excluded), which drifts 3-5%/yr from this one."""
+def reconstruct_benchmark(long: pd.DataFrame, return_coverage: bool = False):
+    """Daily total return of the point-in-time CSI800 members weighted by the PREVIOUS TRADING DAY's float
+    market cap (the same weights the optimiser tracks, see attribution.bench_weights).
+
+    The previous-day cap is taken from each stock's full trading history BEFORE filtering to index
+    members, so a stock that re-enters the index (or enters it for the first time) is weighted by its
+    actual cap of the previous trading day, not by a cap from months ago. Membership: the monthly snapshot
+    (first trading day of the month) applies to every day of that month. A member with no previous-day cap
+    (e.g. first trading day after listing) is excluded that day and counted in the coverage report.
+    The official index uses free-float caps, tiers and caps, so this is a custom float-cap benchmark."""
     uni = pd.read_csv(RAW / "universe_monthly.csv")
     uni["month"] = pd.PeriodIndex(uni.month, freq="M")
-    lm = long[["code", "date", "ret", "float_mcap"]].assign(month=long.date.dt.to_period("M"))
-    lm = lm.merge(uni[["month", "code"]].drop_duplicates(), on=["month", "code"])
-    lm = lm.sort_values(["code", "date"])
-    lm["w"] = lm.groupby("code").float_mcap.shift()
-    lm = lm.dropna(subset=["w"])
-    lm["wr"] = lm.w * lm.ret
-    g = lm.groupby("date")
-    return (g.wr.sum() / g.w.sum()).rename("bench_rec")
+    lm = long[["code", "date", "ret", "float_mcap"]].sort_values(["code", "date"]).copy()
+    lm["w"] = lm.groupby("code").float_mcap.shift()           # previous trading day of the stock itself
+    lm["month"] = lm.date.dt.to_period("M")
+    mem = uni[["month", "code"]].drop_duplicates()
+    lm = lm.merge(mem, on=["month", "code"])
+    n_members = mem.groupby("month").size()
+    have = lm.dropna(subset=["w", "ret"])
+    have = have.assign(wr=have.w * have.ret)
+    g = have.groupby("date")
+    bench = (g.wr.sum() / g.w.sum()).rename("bench_rec")
+    if not return_coverage:
+        return bench
+    cov = pd.DataFrame({"n_weighted": g.size()})
+    cov["n_members"] = n_members.reindex(cov.index.to_period("M")).values
+    cov["coverage"] = cov.n_weighted / cov.n_members
+    return bench, cov
 
 
 def load_benchmarks() -> pd.DataFrame:

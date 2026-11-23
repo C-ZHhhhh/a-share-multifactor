@@ -46,6 +46,12 @@ def optimize(alpha: pd.Series, bench: pd.Series, X: pd.DataFrame, F: pd.DataFram
     Fm = (Fm + Fm.T) / 2 + 1e-10 * np.eye(len(Fm))
     Lf = np.linalg.cholesky(Fm)
 
+    # Turnover policy: planned one-way turnover = 0.5 * (sum|target - w0| + forced exits), where w0 is the
+    # actual book at the signal close and cash is the remainder; deploying cash therefore counts as buying.
+    # The only exemption is a book that is mostly cash (initial build, or cash >= turnover_exempt_cash),
+    # because otherwise the limit would forbid investing; every exemption is reported (info["turnover_exempt"]).
+    cash0 = 1.0 - (w_prev.sum() + out_w)
+    exempt = w0 is None or cash0 >= pcfg.get("turnover_exempt_cash", 0.5)
     w = cp.Variable(len(names))
     act = w - b
     risk = cp.sum_squares(Lf.T @ (X.values.T @ act)) + cp.sum_squares(cp.multiply(np.sqrt(D.values), act))
@@ -60,7 +66,7 @@ def optimize(alpha: pd.Series, bench: pd.Series, X: pd.DataFrame, F: pd.DataFram
              cp.abs(xs @ act) <= pcfg["size_dev"] * relax]
         for name, lim in (pcfg.get("style_limits") or {}).items():   # optional extra style-exposure limits
             c.append(cp.abs(X[name].values @ act) <= lim * relax)
-        if w0 is not None and w_prev.sum() + out_w > 0.5:
+        if not exempt:
             c.append(0.5 * (trade + out_w) <= pcfg["turnover_limit"] * relax)
         return c
 
@@ -81,5 +87,6 @@ def optimize(alpha: pd.Series, bench: pd.Series, X: pd.DataFrame, F: pd.DataFram
     av = wv - b
     info = {"status": status, "relax": relax, "n_holdings": int((wv > 0).sum()),
             "ex_ante_te": float(np.sqrt(np.sum((Lf.T @ (X.values.T @ av)) ** 2) + np.sum(D.values * av ** 2)) * np.sqrt(12)),
-            "planned_turnover": float(0.5 * (np.abs(wv - w_prev).sum() + out_w))}   # target vs actual at signal
+            "planned_turnover": float(0.5 * (np.abs(wv - w_prev).sum() + out_w)),
+            "cash_at_signal": float(cash0), "turnover_exempt": bool(exempt)}   # target vs actual at signal
     return res[res > 0], info

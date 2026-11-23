@@ -35,9 +35,19 @@ FACTOR_INFO = {
 FACTORS = list(FACTOR_INFO)
 
 
-def rebalance_dates(dates: pd.DatetimeIndex) -> pd.DatetimeIndex:
+def rebalance_dates(dates: pd.DatetimeIndex, data_end=None) -> pd.DatetimeIndex:
+    """Last trading day of every COMPLETE month. The last month counts only if the data window covers it
+    (data_end on or after its last calendar day, or the data already reach its last business day);
+    otherwise a mid-month data end would be mistaken for a month-end signal."""
     s = pd.Series(dates, index=dates)
-    return pd.DatetimeIndex(s.groupby(s.dt.to_period("M")).max().values)
+    out = pd.DatetimeIndex(s.groupby(s.dt.to_period("M")).max().values)
+    if len(out) and data_end is not None:
+        last = out[-1]
+        month_end = last + pd.offsets.MonthEnd(0)
+        last_bday = month_end if month_end.weekday() < 5 else month_end - pd.offsets.BDay(1)
+        if not (pd.Timestamp(data_end) >= month_end or last >= last_bday):
+            out = out[:-1]                       # incomplete month: not a rebalance date
+    return out
 
 
 def compute_daily_factors(long: pd.DataFrame) -> dict[str, pd.DataFrame]:

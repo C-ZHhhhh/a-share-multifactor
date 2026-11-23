@@ -12,7 +12,7 @@ from .panel import load_meta, to_wide
 def build_dataset(long: pd.DataFrame) -> pd.DataFrame:
     uni, industry, basic = load_meta()
     dates = pd.DatetimeIndex(sorted(long.date.unique()))
-    rdates = rebalance_dates(dates)
+    rdates = rebalance_dates(dates, CFG["data"]["end"])
     rdates = rdates[(rdates >= CFG["data"]["universe_start"])]
 
     daily_f = compute_daily_factors(long)
